@@ -1,0 +1,7 @@
+# Deploy artifacts built locally, never meant to be versioned
+*.tar.gz
+
+# Editor/tool-local state
+.claude/
+.vscode/
+.idea/
