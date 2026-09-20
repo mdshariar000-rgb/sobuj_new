@@ -424,6 +424,24 @@ class GroupPostsNotifier extends StateNotifier<AsyncValue<GroupPostsState>> {
     }
   }
 
+  Future<Post> updatePost(
+    int postId, {
+    String? body,
+    String? category,
+    File? image,
+    bool removeImage = false,
+  }) async {
+    final updated = await _apiClient.updatePost(
+      postId,
+      body: body,
+      category: category,
+      image: image,
+      removeImage: removeImage,
+    );
+    _replacePost(updated);
+    return updated;
+  }
+
   /// A group admin approves a pending (or previously rejected) post,
   /// flipping it visible to the rest of the group in place.
   Future<void> approvePost(int postId) async {

@@ -26,9 +26,11 @@ class EventCategoryResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-calendar-days';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationGroup = 'Categories';
 
     protected static ?string $navigationLabel = 'Event Categories';
+
+    protected static ?int $navigationSort = 2;
 
     public static function form(Form $form): Form
     {

@@ -3,9 +3,12 @@
 namespace Tests\Feature\Filament;
 
 use App\Enums\ListingStatus;
+use App\Enums\ReportStatus;
+use App\Enums\ReportTargetType;
 use App\Enums\SwapOfferStatus;
 use App\Filament\Widgets\StatsOverviewWidget;
 use App\Models\Listing;
+use App\Models\Report;
 use App\Models\SwapOffer;
 use App\Models\User;
 use Filament\Widgets\StatsOverviewWidget\Stat;
@@ -47,9 +50,34 @@ class StatsOverviewWidgetTest extends TestCase
         /** @var array<int, Stat> $stats */
         $stats = (fn () => $this->getStats())->call($component->instance());
 
+        $byLabel = collect($stats)->mapWithKeys(fn (Stat $stat) => [(string) $stat->getLabel() => (string) $stat->getValue()]);
+
         // admin + owner + 2 explicitly active = 4 (the 3 explicitly suspended excluded).
-        $this->assertSame('4', (string) $stats[0]->getValue());
-        $this->assertSame('2', (string) $stats[1]->getValue());
-        $this->assertSame('4', (string) $stats[2]->getValue());
+        $this->assertSame('4', $byLabel['Total Active Users']);
+        $this->assertSame('4', $byLabel['Active Listings']);
+        $this->assertSame('2', $byLabel['Completed Swaps']);
+        $this->assertSame('0', $byLabel['Pending Reports']);
+    }
+
+    public function test_pending_reports_stat_counts_only_unresolved_reports(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+        $this->actingAs($admin);
+
+        foreach ([ReportStatus::Pending, ReportStatus::Pending, ReportStatus::Dismissed] as $status) {
+            $report = new Report;
+            $report->reporter_id = User::factory()->create()->id;
+            $report->target_type = ReportTargetType::User;
+            $report->target_id = User::factory()->create()->id;
+            $report->reason = 'spam';
+            $report->status = $status;
+            $report->save();
+        }
+
+        $component = Livewire::test(StatsOverviewWidget::class);
+        $stats = (fn () => $this->getStats())->call($component->instance());
+        $byLabel = collect($stats)->mapWithKeys(fn (Stat $stat) => [(string) $stat->getLabel() => (string) $stat->getValue()]);
+
+        $this->assertSame('2', $byLabel['Pending Reports']);
     }
 }

@@ -33,6 +33,7 @@ class DiscoveryController extends Controller
 
         $query = Listing::query()
             ->where('status', ListingStatus::Active)
+            ->whereNotIn('listings.user_id', $request->user()->hiddenUserIds())
             ->when($data['category'] ?? null, fn ($query, $category) => $query->where('listing_type', $category))
             ->when($data['transaction_type'] ?? null, fn ($query, $type) => $query->where('transaction_type', $type))
             ->when($data['q'] ?? null, fn ($query, $term) => $query->search($term))

@@ -48,6 +48,7 @@ class ListingController extends Controller
         $listings = $request->user()
             ->savedListings()
             ->where('status', '!=', ListingStatus::Deleted)
+            ->whereNotIn('listings.user_id', $request->user()->hiddenUserIds())
             ->selectFuzzyCoordinates()
             ->with(['photos', 'user'])
             ->orderBy('saved_listings.created_at', 'desc')
@@ -104,6 +105,9 @@ class ListingController extends Controller
         if ($listing->status === ListingStatus::Deleted && $listing->user_id !== $request->user()->id) {
             abort(404);
         }
+
+        // A blocked (or blocking) user's listings are as good as gone.
+        abort_if($request->user()->hasBlockRelationWith($listing->user_id), 404);
 
         // Doesn't count the owner viewing their own listing.
         if ($listing->user_id !== $request->user()->id) {

@@ -9,6 +9,7 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/app_user.dart';
 import '../../models/listing.dart';
+import '../../models/report.dart';
 import '../../models/swap_message.dart';
 import '../../models/swap_offer.dart';
 import '../../providers/auth_providers.dart';
@@ -17,7 +18,10 @@ import '../../providers/discovery_providers.dart';
 import '../../services/api_exception.dart';
 import '../../services/swap_offer_realtime_channel.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/safety_actions.dart';
+import '../../widgets/user_avatar.dart';
 import 'listing_detail_screen.dart';
+import 'seller_profile_screen.dart';
 import 'widgets/listing_thumbnail.dart';
 
 /// A single swap offer's message thread — real GET/POST against
@@ -429,40 +433,42 @@ class _ThreadHeader extends StatelessWidget {
                 onPressed: () => Navigator.of(context).pop(),
                 icon: const Icon(Icons.arrow_back, color: Colors.white),
               ),
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: AppColors.mint.withValues(alpha: 0.18),
-                child: Text(
-                  name.isNotEmpty ? name[0].toUpperCase() : '?',
-                  style: const TextStyle(
-                    color: AppColors.mint,
-                    fontWeight: FontWeight.w700,
-                  ),
+              GestureDetector(
+                onTap: () => openUserProfile(context, otherParty?.id),
+                child: UserAvatar(
+                  name: name,
+                  avatarUrl: otherParty?.avatarUrl,
+                  radius: 18,
+                  fallbackColor: AppColors.mint.withValues(alpha: 0.18),
+                  fallbackTextColor: AppColors.mint,
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (role != null)
+                child: GestureDetector(
+                  onTap: () => openUserProfile(context, otherParty?.id),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        role,
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: AppColors.textOnDarkMuted,
-                          fontSize: 12,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                  ],
+                      if (role != null)
+                        Text(
+                          role,
+                          style: const TextStyle(
+                            color: AppColors.textOnDarkMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
               PopupMenuButton<VoidCallback>(
@@ -479,6 +485,28 @@ class _ThreadHeader extends StatelessWidget {
                       value: () => onUpdateStatus(newStatus),
                       child: Text(label),
                     ),
+                  if (otherParty != null) ...[
+                    PopupMenuItem(
+                      value: () => showReportSheet(
+                        context,
+                        target: ReportTarget.user,
+                        targetId: otherParty!.id,
+                      ),
+                      child: const Text('Report user'),
+                    ),
+                    PopupMenuItem(
+                      value: () async {
+                        final navigator = Navigator.of(context);
+                        final blocked = await confirmAndBlockUser(
+                          context,
+                          userId: otherParty!.id,
+                          userName: otherParty!.name,
+                        );
+                        if (blocked && navigator.mounted) navigator.pop();
+                      },
+                      child: Text('Block ${otherParty!.name}'),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -869,18 +897,29 @@ class _MessageBubble extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        CircleAvatar(
-          radius: 12,
-          backgroundColor: AppColors.surfaceMuted,
-          child: Text(
-            (sender?.name.isNotEmpty ?? false)
-                ? sender!.name[0].toUpperCase()
-                : '?',
-            style: const TextStyle(fontSize: 10, color: AppColors.primary),
+        GestureDetector(
+          onTap: () => openUserProfile(context, sender?.id),
+          child: UserAvatar(
+            name: sender?.name ?? '?',
+            avatarUrl: sender?.avatarUrl,
+            radius: 12,
           ),
         ),
         const SizedBox(width: 6),
-        Flexible(child: bubble),
+        // Long-press a message from the other person to report it.
+        Flexible(
+          child: GestureDetector(
+            key: Key('message-bubble-${message.id}'),
+            onLongPress: message.isPending
+                ? null
+                : () => showReportSheet(
+                    context,
+                    target: ReportTarget.message,
+                    targetId: message.id,
+                  ),
+            child: bubble,
+          ),
+        ),
       ],
     );
   }

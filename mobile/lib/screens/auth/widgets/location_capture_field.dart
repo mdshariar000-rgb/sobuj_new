@@ -65,6 +65,8 @@ class LocationCaptureField extends ConsumerWidget {
         'Location permission denied. Enable it for this app in system settings.',
       LocationPermissionDeniedException() =>
         'Location permission is required to sign up.',
+      LocationTimeoutException() =>
+        'Could not get your location — check your signal and try again.',
       _ => 'Could not detect your location.',
     };
   }

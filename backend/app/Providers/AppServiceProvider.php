@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Models\Setting;
+use App\Services\Push\FcmPushSender;
+use App\Services\Push\PushSender;
 use Illuminate\Support\ServiceProvider;
 use Intervention\Image\ImageManager;
 
@@ -18,6 +20,11 @@ class AppServiceProvider extends ServiceProvider
         // data back out, which makes the geotag-stripping guarantee in ImageService
         // structural rather than a matter of remembering to pass the right flag.
         $this->app->singleton(ImageManager::class, fn () => ImageManager::gd());
+
+        // Tests bind a fake PushSender instead — see NotificationService,
+        // never send a real push in the automated suite (same precedent as
+        // StripePriceService being mocked rather than hitting real Stripe).
+        $this->app->bind(PushSender::class, FcmPushSender::class);
     }
 
     /**

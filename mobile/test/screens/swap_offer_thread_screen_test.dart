@@ -54,7 +54,7 @@ SwapOffer _buildOffer({required int id}) {
     listing: Listing(
       id: 1,
       title: 'Heirloom Tomato Seeds',
-      listingType: ListingType.seedsScions,
+      listingType: 'Seeds & Scions',
       transactionType: TransactionType.sell,
       status: ListingStatus.active,
       price: 4.5,

@@ -3,14 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../../models/post.dart';
+import '../../../models/report.dart';
 import '../../../theme/app_colors.dart';
+import '../../../widgets/safety_actions.dart';
 import '../../../widgets/user_avatar.dart';
+import '../../discovery/seller_profile_screen.dart';
 
 class PostCard extends StatelessWidget {
   const PostCard({
     super.key,
     required this.post,
     this.onTap,
+    this.onEdit,
     this.onDelete,
     this.onLike,
     this.onApprove,
@@ -19,6 +23,12 @@ class PostCard extends StatelessWidget {
 
   final Post post;
   final VoidCallback? onTap;
+
+  /// Only passed non-null by a caller that has already confirmed this is
+  /// the signed-in user's own post — see PostPolicy::update() on the
+  /// backend, which enforces the same rule server-side regardless of what
+  /// the app shows.
+  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   /// Null hides the like button entirely (e.g. before auth state is ready)
@@ -44,6 +54,9 @@ class PostCard extends StatelessWidget {
     return null;
   }
 
+  void _openAuthorProfile(BuildContext context) =>
+      openUserProfile(context, post.author?.id);
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -63,43 +76,54 @@ class PostCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  UserAvatar(name: authorName, avatarUrl: post.author?.avatarUrl),
+                  InkWell(
+                    onTap: () => _openAuthorProfile(context),
+                    customBorder: const CircleBorder(),
+                    child: UserAvatar(
+                      name: authorName,
+                      avatarUrl: post.author?.avatarUrl,
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                authorName,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w700,
+                    child: InkWell(
+                      onTap: () => _openAuthorProfile(context),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  authorName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
                               ),
-                            ),
-                            if (isVerified) ...[
-                              const SizedBox(width: 4),
-                              const Icon(
-                                Icons.verified,
-                                size: 15,
-                                color: AppColors.primary,
-                              ),
+                              if (isVerified) ...[
+                                const SizedBox(width: 4),
+                                const Icon(
+                                  Icons.verified,
+                                  size: 15,
+                                  color: AppColors.primary,
+                                ),
+                              ],
                             ],
-                          ],
-                        ),
-                        Text(
-                          [
-                            ?roleLabel,
-                            timeago.format(post.createdAt),
-                          ].join(' · '),
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: AppColors.textMuted,
                           ),
-                        ),
-                      ],
+                          Text(
+                            [
+                              ?roleLabel,
+                              timeago.format(post.createdAt),
+                            ].join(' · '),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   if (post.category.toLowerCase() != 'general') ...[
@@ -108,11 +132,93 @@ class PostCard extends StatelessWidget {
                   ],
                   if (post.isPendingApproval || post.isRejected)
                     _ApprovalBadge(isRejected: post.isRejected),
-                  if (onDelete != null)
-                    IconButton(
-                      icon: const Icon(Icons.more_horiz),
-                      tooltip: 'Delete post',
-                      onPressed: onDelete,
+                  if (onEdit == null && onDelete == null && post.author != null)
+                    PopupMenuButton<_PostMenuAction>(
+                      key: Key('post-safety-menu-${post.id}'),
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Post options',
+                      onSelected: (action) {
+                        final author = post.author;
+                        switch (action) {
+                          case _PostMenuAction.report:
+                            showReportSheet(
+                              context,
+                              target: ReportTarget.post,
+                              targetId: post.id,
+                            );
+                          case _PostMenuAction.block:
+                            if (author != null) {
+                              confirmAndBlockUser(
+                                context,
+                                userId: author.id,
+                                userName: author.name,
+                              );
+                            }
+                          case _PostMenuAction.edit || _PostMenuAction.delete:
+                            break;
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: _PostMenuAction.report,
+                          child: ListTile(
+                            leading: Icon(Icons.flag_outlined),
+                            title: Text('Report post'),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: _PostMenuAction.block,
+                          child: ListTile(
+                            leading: const Icon(
+                              Icons.block,
+                              color: AppColors.error,
+                            ),
+                            title: Text(
+                              'Block ${post.author?.name ?? 'user'}',
+                              style: const TextStyle(color: AppColors.error),
+                            ),
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ],
+                    ),
+                  if (onEdit != null || onDelete != null)
+                    PopupMenuButton<_PostMenuAction>(
+                      icon: const Icon(Icons.more_vert),
+                      tooltip: 'Post options',
+                      onSelected: (action) => switch (action) {
+                        _PostMenuAction.edit => onEdit?.call(),
+                        _PostMenuAction.delete => onDelete?.call(),
+                        _PostMenuAction.report ||
+                        _PostMenuAction.block => null,
+                      },
+                      itemBuilder: (context) => [
+                        if (onEdit != null)
+                          const PopupMenuItem(
+                            value: _PostMenuAction.edit,
+                            child: ListTile(
+                              leading: Icon(Icons.edit_outlined),
+                              title: Text('Edit post'),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                        if (onDelete != null)
+                          const PopupMenuItem(
+                            value: _PostMenuAction.delete,
+                            child: ListTile(
+                              leading: Icon(
+                                Icons.delete_outline,
+                                color: AppColors.error,
+                              ),
+                              title: Text(
+                                'Delete post',
+                                style: TextStyle(color: AppColors.error),
+                              ),
+                              contentPadding: EdgeInsets.zero,
+                            ),
+                          ),
+                      ],
                     ),
                 ],
               ),
@@ -319,4 +425,31 @@ class _CountButton extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _PostMenuAction { edit, delete, report, block }
+
+/// Shared "delete post?" confirmation — used by every screen that shows a
+/// [PostCard] with a delete action, so the prompt reads the same everywhere.
+Future<bool> confirmDeletePost(BuildContext context) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Delete post?'),
+      content: const Text(
+        "This removes it for everyone and can't be undone.",
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('Delete', style: TextStyle(color: AppColors.error)),
+        ),
+      ],
+    ),
+  );
+  return confirmed ?? false;
 }

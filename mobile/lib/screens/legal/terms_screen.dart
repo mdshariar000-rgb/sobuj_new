@@ -46,6 +46,41 @@ class TermsScreen extends StatelessWidget {
               'respond. Photos you attach to a post are stored to display '
               'that post.',
             ),
+            SizedBox(height: 20),
+            Text(
+              'Acceptable content',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Agro Hub has zero tolerance for objectionable content or '
+              'abusive users. Do not post anything hateful, harassing, '
+              'sexually explicit, violent, misleading, spam, or illegal — '
+              'including banned or invasive plant species.',
+            ),
+            SizedBox(height: 20),
+            Text(
+              'Reporting and blocking',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'You can report any post, comment, listing, event, group, '
+              'message, or user, and block any user, from the ⋮ menu or by '
+              'long-pressing a message. We review reports promptly — aiming '
+              'for within 24 hours — and remove content or suspend accounts '
+              'that break these terms.',
+            ),
+            SizedBox(height: 20),
+            Text(
+              'The Agri-AI Assistant',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Answers are AI-generated general guidance and can be wrong. '
+              'They are not professional agronomic advice.',
+            ),
             SizedBox(height: 24),
             Text(
               'This is a plain-language summary of current app behavior, not '

@@ -5,6 +5,7 @@ import '../../../models/enums.dart';
 import '../../../models/listing.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/user_avatar.dart';
+import '../seller_profile_screen.dart';
 import 'listing_thumbnail.dart';
 
 String _ctaLabel(TransactionType type) {
@@ -230,47 +231,56 @@ class ListingCard extends StatelessWidget {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      UserAvatar(
-                        name: sellerName,
-                        avatarUrl: listing.owner?.avatarUrl,
-                        radius: 14,
-                        fallbackColor: _avatarColor(listing.owner?.id),
+                      GestureDetector(
+                        onTap: () =>
+                            openUserProfile(context, listing.owner?.id),
+                        child: UserAvatar(
+                          name: sellerName,
+                          avatarUrl: listing.owner?.avatarUrl,
+                          radius: 14,
+                          fallbackColor: _avatarColor(listing.owner?.id),
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    sellerName,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      fontWeight: FontWeight.w700,
+                        child: GestureDetector(
+                          onTap: () =>
+                              openUserProfile(context, listing.owner?.id),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      sellerName,
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
                                   ),
-                                ),
-                                if (isVerified) ...[
-                                  const SizedBox(width: 3),
-                                  const Icon(
-                                    Icons.verified,
-                                    size: 13,
-                                    color: AppColors.primary,
-                                  ),
+                                  if (isVerified) ...[
+                                    const SizedBox(width: 3),
+                                    const Icon(
+                                      Icons.verified,
+                                      size: 13,
+                                      color: AppColors.primary,
+                                    ),
+                                  ],
                                 ],
-                              ],
-                            ),
-                            if (roleLabel != null)
-                              Text(
-                                roleLabel,
-                                style: theme.textTheme.labelSmall?.copyWith(
-                                  color: AppColors.textMuted,
-                                ),
                               ),
-                          ],
+                              if (roleLabel != null)
+                                Text(
+                                  roleLabel,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: AppColors.textMuted,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
                       if (onCta != null)

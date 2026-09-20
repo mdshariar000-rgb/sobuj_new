@@ -9,7 +9,7 @@ void main() {
         'id': 1,
         'title': 'Cherry Tomato Seeds',
         'variety': 'Sweet 100',
-        'listing_type': 'seeds_scions',
+        'listing_type': 'Seeds & Scions',
         'transaction_type': 'swap',
         'price': null,
         'status': 'active',
@@ -34,7 +34,7 @@ void main() {
 
       expect(listing.id, 1);
       expect(listing.title, 'Cherry Tomato Seeds');
-      expect(listing.listingType, ListingType.seedsScions);
+      expect(listing.listingType, 'Seeds & Scions');
       expect(listing.transactionType, TransactionType.swap);
       expect(listing.status, ListingStatus.active);
       expect(listing.price, isNull);

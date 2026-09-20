@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../models/app_user.dart';
 import '../../models/enums.dart';
 import '../../models/listing.dart';
+import '../../models/post.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/discovery_providers.dart';
 import '../../providers/post_providers.dart';
@@ -14,9 +15,11 @@ import '../../providers/shell_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/listing_detail_screen.dart';
+import '../home/widgets/edit_post_sheet.dart';
 import '../home/widgets/post_card.dart';
 import 'edit_profile_screen.dart';
 import 'manage_subscription_screen.dart';
+import 'privacy_safety_screen.dart';
 
 /// The Profile tab: the signed-in user's own details, posts, and listings.
 /// Every field is real — see AppUser/UserResource; there is no Connections
@@ -63,6 +66,16 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             foregroundColor: Colors.white,
             title: const Text('Profile'),
             actions: [
+              IconButton(
+                key: const Key('privacy-safety-button'),
+                icon: const Icon(Icons.shield_outlined),
+                tooltip: 'Privacy & Safety',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const PrivacySafetyScreen(),
+                  ),
+                ),
+              ),
               IconButton(
                 icon: const Icon(Icons.logout),
                 tooltip: 'Log out',
@@ -521,6 +534,27 @@ class _MyPostsTab extends ConsumerWidget {
 
   final int userId;
 
+  void _editPost(BuildContext context, WidgetRef ref, Post post) {
+    showEditPostSheet(
+      context,
+      post: post,
+      onSubmit: (ref, body, category, image, removeImage) => ref
+          .read(authorPostsProvider(userId).notifier)
+          .updatePost(
+            post.id,
+            body: body,
+            category: category,
+            image: image,
+            removeImage: removeImage,
+          ),
+    );
+  }
+
+  Future<void> _deletePost(BuildContext context, WidgetRef ref, int postId) async {
+    if (!await confirmDeletePost(context) || !context.mounted) return;
+    await ref.read(authorPostsProvider(userId).notifier).deletePost(postId);
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final postsAsync = ref.watch(authorPostsProvider(userId));
@@ -552,6 +586,8 @@ class _MyPostsTab extends ConsumerWidget {
               final post = posts[index - 1];
               return PostCard(
                 post: post,
+                onEdit: () => _editPost(context, ref, post),
+                onDelete: () => _deletePost(context, ref, post.id),
                 onLike: () =>
                     ref.read(authorPostsProvider(userId).notifier).toggleLike(post),
               );

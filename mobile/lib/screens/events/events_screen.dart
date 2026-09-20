@@ -6,11 +6,13 @@ import '../../models/event_category.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/event_providers.dart';
 import '../../theme/app_colors.dart';
+import '../notifications/notifications_screen.dart';
 import '../profile/profile_screen.dart';
 import '../shell/widgets/coming_soon_view.dart';
 import 'create_event_screen.dart';
 import 'event_detail_screen.dart';
 import 'events_calendar_screen.dart';
+import 'saved_events_screen.dart';
 import 'widgets/event_card.dart';
 import 'widgets/events_hero_header.dart';
 
@@ -50,12 +52,6 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
     }
   }
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
-  }
-
   List<Event> _applyFilters(List<Event> events) {
     if (_searchQuery.isEmpty) return events;
     return events
@@ -78,9 +74,9 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
       backgroundColor: AppColors.surface,
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'events-fab',
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const CreateEventScreen()),
-        ),
+        onPressed: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const CreateEventScreen())),
         icon: const Icon(Icons.add),
         label: const Text('Host an Event'),
       ),
@@ -89,13 +85,15 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
           EventsHeroHeader(
             userName: userName,
             avatarUrl: currentUser?.avatarUrl,
-            onAvatarTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const ProfileScreen()),
-            ),
+            onAvatarTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const ProfileScreen())),
             onCalendarTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const EventsCalendarScreen()),
             ),
-            onNotificationsTap: () => _comingSoon('Notifications'),
+            onNotificationsTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
@@ -104,8 +102,7 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
                 Expanded(
                   child: TextField(
                     controller: _searchController,
-                    onChanged: (value) =>
-                        setState(() => _searchQuery = value),
+                    onChanged: (value) => setState(() => _searchQuery = value),
                     decoration: const InputDecoration(
                       hintText:
                           'Search farming workshops, field days, webinars...',
@@ -116,8 +113,13 @@ class _EventsScreenState extends ConsumerState<EventsScreen> {
                 ),
                 const SizedBox(width: 10),
                 IconButton.filledTonal(
-                  onPressed: () => _comingSoon('Advanced filters'),
-                  icon: const Icon(Icons.tune),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const SavedEventsScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.bookmark_outline),
+                  tooltip: 'Saved Events',
                 ),
               ],
             ),

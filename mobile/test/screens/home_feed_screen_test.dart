@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/models/post.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
+import 'package:shobuj_mobile/screens/discovery/seller_profile_screen.dart';
 import 'package:shobuj_mobile/screens/home/home_feed_screen.dart';
 
 import '../support/fake_api_client.dart';
@@ -128,13 +129,68 @@ void main() {
 
     expect(find.text('My own post'), findsOneWidget);
 
-    await tester.tap(find.byIcon(Icons.more_horiz));
+    // Both cards have a ⋮ menu (edit/delete on your own, report/block on
+    // someone else's) — the first card is the user's own post.
+    await tester.tap(find.byIcon(Icons.more_vert).first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete post'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
 
     expect(find.text('My own post'), findsNothing);
     expect(find.text('Someone else\'s post'), findsOneWidget);
     expect(fakeClient.deletePostCalled, isTrue);
   });
+
+  testWidgets(
+    'editing your own post sends the real change and updates the feed',
+    (tester) async {
+      final original = _buildPost(
+        id: 1,
+        body: 'My own post',
+        authorId: 1,
+        authorName: 'Me',
+      );
+      final fakeClient = FakeApiClient()
+        ..homeFeedResult = PaginatedResponse(
+          data: [original],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        )
+        ..updatePostResult = _buildPost(
+          id: 1,
+          body: 'Edited post body',
+          authorId: 1,
+          authorName: 'Me',
+        );
+
+      await _pumpHomeFeed(tester, fakeClient);
+
+      expect(find.text('My own post'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Edit post'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Edit post'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'My own post'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'My own post'),
+        'Edited post body',
+      );
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.pumpAndSettle();
+
+      expect(fakeClient.lastUpdatePostId, 1);
+      expect(fakeClient.lastUpdatePostBody, 'Edited post body');
+      expect(find.text('Edited post body'), findsOneWidget);
+      expect(find.text('My own post'), findsNothing);
+    },
+  );
 
   testWidgets(
     'tapping the like button likes a post and updates the count instantly',
@@ -359,5 +415,31 @@ void main() {
     expect(fakeClient.unlikedPostId, 1);
     expect(find.text('2'), findsOneWidget);
     expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+  });
+
+  testWidgets("tapping a post author's name opens their real profile", (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()
+      ..homeFeedResult = PaginatedResponse(
+        data: [
+          _buildPost(id: 1, body: 'A post', authorId: 7, authorName: 'Farida'),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 1,
+      )
+      ..userProfileResult = buildFakeUser(id: 7, name: 'Farida');
+
+    await _pumpHomeFeed(tester, fakeClient);
+
+    await tester.tap(find.text('Farida'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SellerProfileScreen), findsOneWidget);
+    // Appears at least once — once as the profile header's name, and again
+    // as the author attribution on her own post now shown in her profile's
+    // Posts section.
+    expect(find.text('Farida'), findsWidgets);
   });
 }

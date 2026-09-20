@@ -1,26 +1,3 @@
-/// Mirrors App\Enums\ListingType on the backend — the Marketplace's category
-/// taxonomy (matches the Create Listing "Category" picker exactly).
-enum ListingType {
-  seedsScions('seeds_scions', 'Seeds & Scions'),
-  livePlants('live_plants', 'Live Plants & Saplings'),
-  organicFertilizers('organic_fertilizers', 'Organic Fertilizers'),
-  farmTools('farm_tools', 'Farm Tools & Equipment'),
-  harvestProduce('harvest_produce', 'Harvest & Produce'),
-  compostSoils('compost_soils', 'Compost & Soils');
-
-  const ListingType(this.value, this.label);
-
-  final String value;
-  final String label;
-
-  static ListingType fromValue(String value) {
-    return ListingType.values.firstWhere(
-      (type) => type.value == value,
-      orElse: () => throw FormatException('Unknown ListingType value: $value'),
-    );
-  }
-}
-
 /// Mirrors App\Enums\TransactionType on the backend.
 enum TransactionType {
   swap('swap', 'Trade'),

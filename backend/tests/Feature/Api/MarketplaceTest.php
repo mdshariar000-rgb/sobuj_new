@@ -25,7 +25,7 @@ class MarketplaceTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Wanted: Heavy Duty Broadfork',
-            'listing_type' => 'live_plants',
+            'listing_type' => 'Live Plants & Saplings',
             'transaction_type' => 'wanted',
             'looking_for' => 'A sturdy broadfork or U-bar digger, used is fine.',
             'latitude' => 23.780636,
@@ -43,7 +43,7 @@ class MarketplaceTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Wanted: Heavy Duty Broadfork',
-            'listing_type' => 'live_plants',
+            'listing_type' => 'Live Plants & Saplings',
             'transaction_type' => 'wanted',
             'price' => 85,
             'latitude' => 23.780636,
@@ -160,7 +160,7 @@ class MarketplaceTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Meyer Lemon Rootstock',
-            'listing_type' => 'live_plants',
+            'listing_type' => 'Live Plants & Saplings',
             'transaction_type' => 'swap',
             'description' => 'Healthy rootstock, grown from seed two years ago.',
             'condition' => 'new_fresh',

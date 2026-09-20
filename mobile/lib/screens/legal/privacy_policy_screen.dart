@@ -44,8 +44,24 @@ class PrivacyPolicyScreen extends StatelessWidget {
             SizedBox(height: 8),
             Text(
               "A photo or message you send to the Agri-AI Assistant is sent to "
-              "Google's Gemini API to generate a response. No other "
-              'content is shared with third parties.',
+              "Google's Gemini API to generate a response — we ask for your "
+              'permission before this happens the first time. Push '
+              "notifications are delivered through Google's Firebase Cloud "
+              'Messaging, and subscription payments are handled by Stripe. '
+              'No other content is shared with third parties, and we do not '
+              'sell your data or use it for advertising.',
+            ),
+            SizedBox(height: 20),
+            Text(
+              'Deleting your data',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'You can permanently delete your account and all of your data '
+              'at any time from Profile → Privacy & Safety → Delete account. '
+              'The full policy is also available online at '
+              'codecell.site/privacy.',
             ),
             SizedBox(height: 24),
             Text(

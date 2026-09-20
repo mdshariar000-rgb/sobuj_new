@@ -2,8 +2,10 @@
 
 use App\Http\Controllers\Api\V1\AiAssistantController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\BlockController;
 use App\Http\Controllers\Api\V1\CommentController;
 use App\Http\Controllers\Api\V1\ConfigController;
+use App\Http\Controllers\Api\V1\DeviceTokenController;
 use App\Http\Controllers\Api\V1\DiscoveryController;
 use App\Http\Controllers\Api\V1\EventCategoryController;
 use App\Http\Controllers\Api\V1\EventController;
@@ -12,10 +14,13 @@ use App\Http\Controllers\Api\V1\GroupController;
 use App\Http\Controllers\Api\V1\GroupJoinRequestController;
 use App\Http\Controllers\Api\V1\GroupMessageController;
 use App\Http\Controllers\Api\V1\HomeFeedController;
+use App\Http\Controllers\Api\V1\ListingCategoryController;
 use App\Http\Controllers\Api\V1\ListingController;
 use App\Http\Controllers\Api\V1\MessageController;
+use App\Http\Controllers\Api\V1\NotificationController;
 use App\Http\Controllers\Api\V1\PostCategoryController;
 use App\Http\Controllers\Api\V1\PostController;
+use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\SubscriptionController;
 use App\Http\Controllers\Api\V1\SwapOfferController;
 use App\Http\Controllers\Api\V1\UserController;
@@ -32,9 +37,18 @@ Route::prefix('v1')->group(function () {
         // sign out, regardless of account standing.
         Route::get('/auth/me', [AuthController::class, 'me']);
         Route::post('/auth/logout', [AuthController::class, 'logout']);
+        Route::delete('/auth/me', [AuthController::class, 'destroy']);
+
+        // Tied to the login/logout lifecycle exactly like the two routes
+        // above — a suspended account should still be able to unregister
+        // its device on logout, even though it can't use the rest of the API.
+        Route::post('/device-tokens', [DeviceTokenController::class, 'store']);
+        Route::delete('/device-tokens', [DeviceTokenController::class, 'destroy']);
 
         Route::middleware('not_suspended')->group(function () {
             Route::patch('/auth/me', [AuthController::class, 'updateProfile']);
+
+            Route::get('/listing-categories', [ListingCategoryController::class, 'index']);
 
             // Registered before the apiResource below so the literal "nearby"/"saved"
             // segments aren't swallowed by the "{listing}" wildcard route.
@@ -55,6 +69,12 @@ Route::prefix('v1')->group(function () {
 
             Route::get('/users/{user}', [UserController::class, 'show']);
             Route::get('/users/{user}/listings', [UserController::class, 'listings']);
+
+            // Trust & safety — user-generated-content reporting and blocking
+            Route::post('/reports', [ReportController::class, 'store']);
+            Route::get('/blocks', [BlockController::class, 'index']);
+            Route::post('/users/{user}/block', [BlockController::class, 'store']);
+            Route::delete('/users/{user}/block', [BlockController::class, 'destroy']);
 
             // Agro Hub — Groups
             Route::get('/group-categories', [GroupCategoryController::class, 'index']);
@@ -78,6 +98,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/post-categories', [PostCategoryController::class, 'index']);
             Route::post('/posts', [PostController::class, 'store']);
             Route::get('/posts/{post}', [PostController::class, 'show']);
+            Route::patch('/posts/{post}', [PostController::class, 'update']);
             Route::delete('/posts/{post}', [PostController::class, 'destroy']);
             Route::post('/posts/{post}/like', [PostController::class, 'like']);
             Route::delete('/posts/{post}/like', [PostController::class, 'unlike']);
@@ -91,6 +112,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/event-categories', [EventCategoryController::class, 'index']);
             Route::get('/events', [EventController::class, 'index']);
             Route::post('/events', [EventController::class, 'store']);
+
+            // Registered before the "{event}" wildcard below so the literal
+            // "saved" segment isn't swallowed by it — same reasoning as
+            // /listings/nearby vs /listings/{listing}.
+            Route::get('/events/saved', [EventController::class, 'saved']);
+
             Route::get('/events/{event}', [EventController::class, 'show']);
             Route::patch('/events/{event}', [EventController::class, 'update']);
             Route::delete('/events/{event}', [EventController::class, 'destroy']);
@@ -98,6 +125,14 @@ Route::prefix('v1')->group(function () {
             Route::delete('/events/{event}/rsvp', [EventController::class, 'cancelRsvp']);
             Route::post('/events/{event}/save', [EventController::class, 'save']);
             Route::delete('/events/{event}/save', [EventController::class, 'unsave']);
+
+            // Agro Hub — Notifications
+            // unread-count/read-all declared before the {notification} wildcard for
+            // the same reason /listings/nearby is declared before /listings/{listing}.
+            Route::get('/notifications', [NotificationController::class, 'index']);
+            Route::get('/notifications/unread-count', [NotificationController::class, 'unreadCount']);
+            Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead']);
+            Route::post('/notifications/{notification}/read', [NotificationController::class, 'markRead']);
 
             // Agro Hub — Agri-AI Assistant (subscription-gated — see AiConversationPolicy)
             Route::get('/ai/conversations', [AiAssistantController::class, 'index']);

@@ -31,7 +31,9 @@ class GroupResource extends Resource
 
     protected static ?string $navigationLabel = 'Groups';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationGroup = 'Moderation';
+
+    protected static ?int $navigationSort = 3;
 
     public static function canCreate(): bool
     {

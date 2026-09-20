@@ -5,6 +5,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- For the "Sign in with Face ID / Fingerprint" quick-unlock option on Login. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- Required on Android 13+ for a push notification to ever be shown —
+         declaring it here is necessary but not sufficient; the app also
+         requests it at runtime (see PushNotificationService). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="shobuj_mobile"

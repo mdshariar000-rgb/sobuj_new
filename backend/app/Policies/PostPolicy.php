@@ -20,6 +20,11 @@ class PostPolicy
         return $user->id === $post->author_id;
     }
 
+    public function update(User $user, Post $post): bool
+    {
+        return $user->id === $post->author_id;
+    }
+
     /**
      * A site-admin-banned/deactivated post is invisible to everyone via the
      * API (staff still see it, via before()'s is_admin bypass, and through

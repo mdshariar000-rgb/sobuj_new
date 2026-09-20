@@ -3,7 +3,6 @@
 namespace Database\Factories;
 
 use App\Enums\ListingStatus;
-use App\Enums\ListingType;
 use App\Enums\TransactionType;
 use App\Models\Listing;
 use App\Models\User;
@@ -28,7 +27,14 @@ class ListingFactory extends Factory
             'user_id' => User::factory(),
             'title' => fake()->words(3, true),
             'variety' => fake()->word(),
-            'listing_type' => fake()->randomElement(ListingType::cases()),
+            'listing_type' => fake()->randomElement([
+                'Seeds & Scions',
+                'Live Plants & Saplings',
+                'Organic Fertilizers',
+                'Farm Tools & Equipment',
+                'Harvest & Produce',
+                'Compost & Soils',
+            ]),
             'transaction_type' => TransactionType::Swap,
             'price' => null,
             'status' => ListingStatus::Active,

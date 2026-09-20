@@ -37,7 +37,7 @@ void main() {
           latitude: 23.78,
           longitude: 90.27,
           radiusKm: 15,
-          category: ListingType.seedsScions,
+          category: 'Seeds & Scions',
           transactionType: TransactionType.swap,
           search: '  tomato  ',
           page: 2,
@@ -55,7 +55,7 @@ void main() {
         expect(captured['latitude'], 23.78);
         expect(captured['longitude'], 90.27);
         expect(captured['radius_km'], 15);
-        expect(captured['category'], 'seeds_scions');
+        expect(captured['category'], 'Seeds & Scions');
         expect(captured['transaction_type'], 'swap');
         expect(captured['q'], 'tomato');
         expect(captured['page'], 2);

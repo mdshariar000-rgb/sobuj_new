@@ -4,18 +4,22 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\GroupMemberRole;
 use App\Enums\GroupStatus;
+use App\Enums\NotificationType;
 use App\Enums\PostApprovalStatus;
 use App\Enums\PostModerationStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Post\StorePostRequest;
+use App\Http\Requests\Post\UpdatePostRequest;
 use App\Http\Resources\PostResource;
 use App\Models\Group;
 use App\Models\Post;
 use App\Services\ImageService;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class PostController extends Controller
@@ -67,6 +71,7 @@ class PostController extends Controller
             // state — a banned/deactivated post stays hidden even from the
             // group's own admin.
             ->where('moderation_status', PostModerationStatus::Visible)
+            ->whereNotIn('author_id', $request->user()->hiddenUserIds())
             ->when(! $isGroupAdmin, fn ($query) => $query->where(function ($query) use ($request) {
                 $query->where('approval_status', PostApprovalStatus::Approved)
                     ->orWhere('author_id', $request->user()->id);
@@ -148,6 +153,48 @@ class PostController extends Controller
         return new PostResource($post);
     }
 
+    /**
+     * Only the author's own body/category/image — group_id, author, and
+     * moderation/approval state are never editable here. A new image
+     * replaces (and deletes) the old one; remove_image=true clears it
+     * without uploading a new one.
+     */
+    public function update(UpdatePostRequest $request, Post $post, ImageService $imageService): PostResource
+    {
+        $this->authorize('update', $post);
+
+        $data = $request->validated();
+
+        if (array_key_exists('body', $data)) {
+            $post->body = $data['body'];
+        }
+
+        if (array_key_exists('category', $data)) {
+            $post->category = $data['category'] ?? 'General';
+        }
+
+        if ($request->hasFile('image')) {
+            if ($post->image_path !== null) {
+                $imageService->delete($post->image_path);
+            }
+            $post->image_path = $imageService->store($request->file('image'), 'posts');
+        } elseif ($request->boolean('remove_image') && $post->image_path !== null) {
+            $imageService->delete($post->image_path);
+            $post->image_path = null;
+        }
+
+        $post->save();
+
+        $freshPost = $post->fresh(['author', 'group']);
+        $freshPost->loadCount(['comments', 'likedBy as likes_count']);
+        $freshPost->setAttribute(
+            'liked_by_me',
+            $freshPost->likedBy()->where('user_id', $request->user()->id)->exists(),
+        );
+
+        return new PostResource($freshPost);
+    }
+
     public function destroy(Post $post): JsonResponse
     {
         $this->authorize('delete', $post);
@@ -187,13 +234,27 @@ class PostController extends Controller
         return response()->json(['message' => 'Post rejected.']);
     }
 
-    public function like(Request $request, Post $post): PostResource
+    public function like(Request $request, Post $post, NotificationService $notificationService): PostResource
     {
+        // Checked before syncing so a re-like of an already-liked post never
+        // re-notifies the author.
+        $isNewLike = ! $post->likedBy()->where('user_id', $request->user()->id)->exists();
         $post->likedBy()->syncWithoutDetaching([$request->user()->id]);
 
         $post->loadCount(['comments', 'likedBy as likes_count'])
             ->loadMissing(['author', 'group']);
         $post->setAttribute('liked_by_me', true);
+
+        if ($isNewLike) {
+            $notificationService->notify(
+                $post->author,
+                $request->user(),
+                NotificationType::PostLiked,
+                "{$request->user()->name} liked your post",
+                Str::limit($post->body, 100),
+                ['post_id' => $post->id, 'group_id' => $post->group_id],
+            );
+        }
 
         return new PostResource($post);
     }

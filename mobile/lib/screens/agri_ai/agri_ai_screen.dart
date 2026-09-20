@@ -9,6 +9,7 @@ import '../../providers/subscription_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
 import 'agri_ai_paywall_screen.dart';
+import 'widgets/ai_consent_view.dart';
 import 'widgets/ai_history_sheet.dart';
 import 'widgets/ai_message_bubble.dart';
 
@@ -98,9 +99,23 @@ class _AgriAiScreenState extends ConsumerState<AgriAiScreen> {
       loading: () =>
           const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (error, _) => const AgriAiPaywallScreen(),
-      data: (subscription) => subscription.hasAccess
-          ? _buildChat(context)
-          : const AgriAiPaywallScreen(),
+      data: (subscription) {
+        if (!subscription.hasAccess) return const AgriAiPaywallScreen();
+
+        // Chatting sends the user's messages/photos to Google's Gemini API,
+        // so it needs their explicit consent first. Fails closed (shows the
+        // consent screen) if the stored answer can't be read.
+        return ref
+            .watch(aiConsentProvider)
+            .when(
+              loading: () => const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              ),
+              error: (_, _) => const AiConsentView(),
+              data: (consented) =>
+                  consented ? _buildChat(context) : const AiConsentView(),
+            );
+      },
     );
   }
 

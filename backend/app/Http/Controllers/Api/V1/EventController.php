@@ -24,14 +24,19 @@ class EventController extends Controller
     private const PER_PAGE = 20;
 
     /**
-     * Published events, soonest first. Draft/canceled events are only visible
-     * on the host's own management view (not built here — same pattern as
-     * ListingController::index() for owner-scoped listings if that's needed
-     * later).
+     * Published, not-yet-expired events, soonest first. Draft/canceled
+     * events are only visible on the host's own management view (not built
+     * here — same pattern as ListingController::index() for owner-scoped
+     * listings if that's needed later).
      *
-     * ?month=YYYY-MM narrows to that calendar month — backs the Events tab's
-     * calendar view, which needs every event in the visible month rather
-     * than just the next PER_PAGE soonest ones.
+     * "Expired" means its end time (or start time, if it has no end time)
+     * has already passed — an event already underway still shows until it
+     * actually ends, rather than disappearing the instant its start time
+     * ticks over. This only applies to the plain timeline: ?month=YYYY-MM
+     * (the Events tab's calendar view) deliberately still returns every
+     * event in that month, past or future, since browsing a past month is
+     * for looking back at what already happened.
+     *
      * ?category= narrows to one admin-managed event category name (see
      * EventCategory) — backs the Events tab's filter chips; omitted (the
      * "All Events" chip) shows every category, soonest first.
@@ -45,6 +50,7 @@ class EventController extends Controller
 
         $events = Event::query()
             ->where('status', EventStatus::Published)
+            ->whereNotIn('host_id', $request->user()->hiddenUserIds())
             ->when($request->filled('group_id'), fn ($query) => $query->where('group_id', $request->integer('group_id')))
             ->when(
                 $request->filled('category'),
@@ -56,6 +62,13 @@ class EventController extends Controller
                     $month->copy()->startOfMonth(),
                     $month->copy()->endOfMonth(),
                 ]);
+            }, function ($query) {
+                $query->where(function ($query) {
+                    $query->where('ends_at', '>=', now())
+                        ->orWhere(function ($query) {
+                            $query->whereNull('ends_at')->where('starts_at', '>=', now());
+                        });
+                });
             })
             ->withCount('attendees')
             // A cheap correlated-subquery column rather than eager-loading every
@@ -79,6 +92,35 @@ class EventController extends Controller
             ->orderBy('starts_at')
             ->paginate(self::PER_PAGE)
             ->withQueryString();
+
+        return EventResource::collection($events);
+    }
+
+    /**
+     * Events this user has bookmarked, most recently saved first — the
+     * "Saved Events" list. Unlike index(), this intentionally doesn't filter
+     * out expired events: a saved event that already happened is still
+     * something the user chose to keep, not something to hide.
+     */
+    public function saved(Request $request): AnonymousResourceCollection
+    {
+        $events = $request->user()
+            ->savedEvents()
+            ->withCount('attendees')
+            ->addSelect(['my_rsvp_status' => EventAttendee::query()
+                ->select('status')
+                ->whereColumn('event_id', 'events.id')
+                ->where('user_id', $request->user()->id)
+                ->limit(1),
+            ])
+            ->with(['host', 'group'])
+            ->orderBy('saved_events.created_at', 'desc')
+            ->paginate(self::PER_PAGE)
+            ->withQueryString();
+
+        $events->getCollection()->each(
+            fn (Event $event) => $event->setAttribute('is_saved', true),
+        );
 
         return EventResource::collection($events);
     }

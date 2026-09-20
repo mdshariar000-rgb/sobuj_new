@@ -18,11 +18,12 @@ final eventsCategoryProvider = StateProvider<String?>((ref) => null);
 /// The admin-managed category list — both the Events tab's filter chips
 /// and the "create an event" form's category picker read from this single
 /// source of truth rather than each guessing at real values independently.
-final eventCategoriesProvider =
-    FutureProvider.autoDispose<List<EventCategory>>((ref) async {
-      final apiClient = ref.watch(apiClientProvider);
-      return apiClient.eventCategories();
-    });
+final eventCategoriesProvider = FutureProvider.autoDispose<List<EventCategory>>(
+  (ref) async {
+    final apiClient = ref.watch(apiClientProvider);
+    return apiClient.eventCategories();
+  },
+);
 
 @immutable
 class EventsListState {
@@ -196,6 +197,48 @@ final eventsListProvider =
         ref.watch(eventsCategoryProvider),
       ),
     );
+
+/// The "Saved Events" list — every event the user has tapped the bookmark
+/// icon on. autoDispose so it's re-fetched fresh each time the screen opens
+/// — same pattern as SavedListingsNotifier.
+class SavedEventsNotifier extends StateNotifier<AsyncValue<List<Event>>> {
+  SavedEventsNotifier(this._apiClient) : super(const AsyncValue.loading()) {
+    refresh();
+  }
+
+  final ApiClient _apiClient;
+
+  Future<void> refresh() async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      final response = await _apiClient.savedEvents();
+      return response.data;
+    });
+  }
+
+  /// Unsaving here removes the event from this list entirely — this view is
+  /// specifically "things I've saved", so an unsaved item doesn't belong in
+  /// it anymore. Optimistic, with rollback on failure.
+  Future<void> unsave(Event event) async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+
+    state = AsyncValue.data(current.where((e) => e.id != event.id).toList());
+
+    try {
+      await _apiClient.unsaveEvent(event.id);
+    } catch (_) {
+      state = AsyncValue.data(current);
+      rethrow;
+    }
+  }
+}
+
+final savedEventsProvider =
+    StateNotifierProvider.autoDispose<
+      SavedEventsNotifier,
+      AsyncValue<List<Event>>
+    >((ref) => SavedEventsNotifier(ref.watch(apiClientProvider)));
 
 /// Formats a month as the 'YYYY-MM' key EventController::index()'s ?month=
 /// filter expects.

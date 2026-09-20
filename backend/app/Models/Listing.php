@@ -4,7 +4,6 @@ namespace App\Models;
 
 use App\Enums\ListingCondition;
 use App\Enums\ListingStatus;
-use App\Enums\ListingType;
 use App\Enums\TransactionType;
 use App\Models\Concerns\HasFuzzyLocation;
 use Database\Factories\ListingFactory;
@@ -57,7 +56,6 @@ class Listing extends Model
     protected function casts(): array
     {
         return [
-            'listing_type' => ListingType::class,
             'transaction_type' => TransactionType::class,
             'status' => ListingStatus::class,
             'condition' => ListingCondition::class,

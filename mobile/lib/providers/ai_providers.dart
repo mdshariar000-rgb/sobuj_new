@@ -7,7 +7,17 @@ import '../models/ai_conversation.dart';
 import '../models/ai_message.dart';
 import '../models/ai_message_role.dart';
 import '../services/api_client.dart';
+import 'auth_providers.dart';
 import 'core_providers.dart';
+
+/// Whether the signed-in user has agreed to send Agri-AI content to Google's
+/// Gemini API. Apple requires explicit consent before personal data (here: the
+/// photos and messages a user sends) is shared with a third-party AI service.
+final aiConsentProvider = FutureProvider.autoDispose<bool>((ref) async {
+  final user = ref.watch(authControllerProvider).valueOrNull;
+  if (user == null) return false;
+  return ref.watch(secureStorageProvider).readAiConsent(user.id);
+});
 
 /// Past conversation history — simple one-shot fetch (no create/delete
 /// mutation needed here, unlike Home Feed/Groups), matching Discovery's

@@ -23,17 +23,17 @@ void main() {
 
     test('toggleCategory selects a category on first tap', () {
       final notifier = DiscoveryFiltersNotifier()
-        ..toggleCategory(ListingType.seedsScions);
+        ..toggleCategory('Seeds & Scions');
 
-      expect(notifier.state.category, ListingType.seedsScions);
+      expect(notifier.state.category, 'Seeds & Scions');
     });
 
     test(
       'toggleCategory clears the category when tapping the selected one again',
       () {
         final notifier = DiscoveryFiltersNotifier()
-          ..toggleCategory(ListingType.seedsScions)
-          ..toggleCategory(ListingType.seedsScions);
+          ..toggleCategory('Seeds & Scions')
+          ..toggleCategory('Seeds & Scions');
 
         expect(notifier.state.category, isNull);
       },
@@ -41,10 +41,10 @@ void main() {
 
     test('toggleCategory switches to a different category directly', () {
       final notifier = DiscoveryFiltersNotifier()
-        ..toggleCategory(ListingType.seedsScions)
-        ..toggleCategory(ListingType.livePlants);
+        ..toggleCategory('Seeds & Scions')
+        ..toggleCategory('Live Plants & Saplings');
 
-      expect(notifier.state.category, ListingType.livePlants);
+      expect(notifier.state.category, 'Live Plants & Saplings');
     });
 
     test('toggleTransactionType behaves the same way as toggleCategory', () {
@@ -57,11 +57,11 @@ void main() {
 
     test('setRadiusKm updates only the radius', () {
       final notifier = DiscoveryFiltersNotifier()
-        ..toggleCategory(ListingType.seedsScions)
+        ..toggleCategory('Seeds & Scions')
         ..setRadiusKm(25);
 
       expect(notifier.state.radiusKm, 25);
-      expect(notifier.state.category, ListingType.seedsScions);
+      expect(notifier.state.category, 'Seeds & Scions');
     });
   });
 }

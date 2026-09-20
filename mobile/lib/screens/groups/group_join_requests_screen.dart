@@ -6,6 +6,7 @@ import '../../models/group.dart';
 import '../../providers/group_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/user_avatar.dart';
+import '../discovery/seller_profile_screen.dart';
 
 /// The group admin/creator's real moderation queue for pending requests to
 /// join a private group — see GET/PATCH /groups/{id}/join-requests on the
@@ -63,6 +64,7 @@ class GroupJoinRequestsScreen extends ConsumerWidget {
             itemBuilder: (context, index) {
               final request = requests[index];
               return ListTile(
+                onTap: () => openUserProfile(context, request.user.id),
                 leading: UserAvatar(
                   name: request.user.name,
                   avatarUrl: request.user.avatarUrl,

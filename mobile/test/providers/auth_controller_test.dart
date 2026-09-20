@@ -5,6 +5,7 @@ import 'package:shobuj_mobile/providers/auth_providers.dart';
 import 'package:shobuj_mobile/services/api_client.dart';
 import 'package:shobuj_mobile/services/api_exception.dart';
 import 'package:shobuj_mobile/services/biometric_service.dart';
+import 'package:shobuj_mobile/services/push_notification_service.dart';
 import 'package:shobuj_mobile/services/secure_storage_service.dart';
 
 class MockApiClient extends Mock implements ApiClient {}
@@ -12,6 +13,9 @@ class MockApiClient extends Mock implements ApiClient {}
 class MockSecureStorageService extends Mock implements SecureStorageService {}
 
 class MockBiometricService extends Mock implements BiometricService {}
+
+class MockPushNotificationService extends Mock
+    implements PushNotificationService {}
 
 AppUser _buildUser({int id = 1}) {
   return AppUser(
@@ -26,11 +30,26 @@ void main() {
   late MockApiClient apiClient;
   late MockSecureStorageService secureStorage;
   late MockBiometricService biometricService;
+  late MockPushNotificationService pushService;
+
+  setUpAll(() {
+    registerFallbackValue(MockApiClient());
+  });
 
   setUp(() {
     apiClient = MockApiClient();
     secureStorage = MockSecureStorageService();
     biometricService = MockBiometricService();
+    pushService = MockPushNotificationService();
+    // Fire-and-forget in AuthController (never awaited), so an unstubbed
+    // mock call would throw MissingStubError synchronously and break the
+    // surrounding login/register/restore flow — stub them as real no-ops
+    // for every test, matching what the real service already guarantees
+    // (it never throws, even on failure).
+    when(
+      () => pushService.requestPermissionAndRegister(any()),
+    ).thenAnswer((_) async {});
+    when(() => pushService.unregister(any())).thenAnswer((_) async {});
   });
 
   group('session restore (on construction)', () {
@@ -43,6 +62,7 @@ void main() {
           apiClient,
           secureStorage,
           biometricService,
+          pushService,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -62,6 +82,7 @@ void main() {
         apiClient,
         secureStorage,
         biometricService,
+        pushService,
       );
       await Future<void>.delayed(Duration.zero);
 
@@ -83,6 +104,7 @@ void main() {
           apiClient,
           secureStorage,
           biometricService,
+          pushService,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -101,6 +123,7 @@ void main() {
           apiClient,
           secureStorage,
           biometricService,
+          pushService,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -133,6 +156,7 @@ void main() {
           apiClient,
           secureStorage,
           biometricService,
+          pushService,
         );
         await Future<void>.delayed(Duration.zero);
 
@@ -170,6 +194,7 @@ void main() {
         apiClient,
         secureStorage,
         biometricService,
+        pushService,
       );
       await Future<void>.delayed(Duration.zero);
       expect(controller.state.value, user);

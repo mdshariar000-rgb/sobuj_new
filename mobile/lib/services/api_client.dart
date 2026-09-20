@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 
 import '../models/agri_ai_config.dart';
 import '../models/ai_conversation.dart';
+import '../models/app_notification.dart';
 import '../models/app_user.dart';
 import '../models/comment.dart';
 import '../models/enums.dart';
@@ -16,9 +17,11 @@ import '../models/group_join_request.dart';
 import '../models/group_member.dart';
 import '../models/group_message.dart';
 import '../models/listing.dart';
+import '../models/listing_category.dart';
 import '../models/paginated_response.dart';
 import '../models/post.dart';
 import '../models/post_category.dart';
+import '../models/report.dart';
 import '../models/subscription_status.dart';
 import '../models/swap_message.dart';
 import '../models/swap_offer.dart';
@@ -46,6 +49,7 @@ class ApiClient {
     required String passwordConfirmation,
     required double latitude,
     required double longitude,
+    String? locationLabel,
     String? experienceLevel,
     String? growingSetup,
   }) {
@@ -58,6 +62,7 @@ class ApiClient {
         'password_confirmation': passwordConfirmation,
         'latitude': latitude,
         'longitude': longitude,
+        'location_label': ?locationLabel,
         'experience_level': ?experienceLevel,
         'growing_setup': ?growingSetup,
       },
@@ -73,6 +78,52 @@ class ApiClient {
 
   Future<void> logout() async {
     await _post('/auth/logout');
+  }
+
+  /// DELETE /api/v1/auth/me — permanently deletes the signed-in account and
+  /// its data (App Store Guideline 5.1.1(v)). Requires the current password;
+  /// a wrong one comes back as a 422 [ApiException] on the `password` field.
+  Future<void> deleteAccount({required String password}) async {
+    await _delete('/auth/me', data: {'password': password});
+  }
+
+  /// POST /api/v1/reports — files a report against content or a user.
+  /// Idempotent server-side: reporting the same item twice is fine.
+  Future<void> reportContent({
+    required ReportTarget target,
+    required int targetId,
+    required ReportReason reason,
+    String? details,
+  }) async {
+    await _post(
+      '/reports',
+      data: {
+        'target_type': target.wireValue,
+        'target_id': targetId,
+        'reason': reason.wireValue,
+        if (details != null && details.trim().isNotEmpty)
+          'details': details.trim(),
+      },
+    );
+  }
+
+  /// POST /api/v1/users/{userId}/block — idempotent.
+  Future<void> blockUser(int userId) async {
+    await _post('/users/$userId/block');
+  }
+
+  /// DELETE /api/v1/users/{userId}/block
+  Future<void> unblockUser(int userId) async {
+    await _delete('/users/$userId/block');
+  }
+
+  /// GET /api/v1/blocks — users the signed-in account has blocked.
+  Future<PaginatedResponse<AppUser>> blockedUsers({int page = 1}) async {
+    final response = await _get('/blocks', queryParameters: {'page': page});
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      AppUser.fromJson,
+    );
   }
 
   /// GET /api/v1/auth/me — used to restore a session on app start (validate a
@@ -141,7 +192,7 @@ class ApiClient {
     required double latitude,
     required double longitude,
     double radiusKm = 10,
-    ListingType? category,
+    String? category,
     TransactionType? transactionType,
     String? search,
     String? sort,
@@ -154,7 +205,7 @@ class ApiClient {
         'longitude': longitude,
         'radius_km': radiusKm,
         'page': page,
-        if (category != null) 'category': category.value,
+        if (category != null) 'category': category,
         if (transactionType != null) 'transaction_type': transactionType.value,
         if (search != null && search.trim().isNotEmpty) 'q': search.trim(),
         'sort': ?sort,
@@ -174,7 +225,7 @@ class ApiClient {
     String? variety,
     String? description,
     ListingCondition? condition,
-    required ListingType listingType,
+    required String listingType,
     required TransactionType transactionType,
     double? price,
     String? lookingFor,
@@ -188,7 +239,7 @@ class ApiClient {
       'variety': ?variety,
       'description': ?description,
       'condition': ?condition?.value,
-      'listing_type': listingType.value,
+      'listing_type': listingType,
       'transaction_type': transactionType.value,
       'price': ?price,
       'looking_for': ?lookingFor,
@@ -236,6 +287,16 @@ class ApiClient {
     return PaginatedResponse.fromJson(
       response.data as Map<String, dynamic>,
       Listing.fromJson,
+    );
+  }
+
+  /// GET /api/v1/swap-offers/{swapOfferId} — used for notification-tap
+  /// deep-linking (a swap-message notification only carries a
+  /// swap_offer_id).
+  Future<SwapOffer> swapOffer(int swapOfferId) async {
+    final response = await _get('/swap-offers/$swapOfferId');
+    return SwapOffer.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
     );
   }
 
@@ -400,8 +461,46 @@ class ApiClient {
     );
   }
 
+  /// GET /api/v1/posts/{postId} — used for notification-tap deep-linking
+  /// (post liked/commented/replied-to notifications only carry a post_id).
+  Future<Post> post(int postId) async {
+    final response = await _get('/posts/$postId');
+    return Post.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
   Future<void> deletePost(int postId) async {
     await _delete('/posts/$postId');
+  }
+
+  /// PATCH /api/v1/posts/{postId} — only the author's own body/category/
+  /// image are editable; sent as a spoofed POST + `_method: PATCH` the same
+  /// way updateGroup()/updateProfile() are, since a real multipart PATCH
+  /// doesn't populate PHP's $_FILES. removeImage clears an existing photo
+  /// without uploading a new one; ignored when [image] is also given.
+  Future<Post> updatePost(
+    int postId, {
+    String? body,
+    String? category,
+    File? image,
+    bool removeImage = false,
+  }) async {
+    final response = await _post(
+      '/posts/$postId',
+      data: FormData.fromMap({
+        '_method': 'PATCH',
+        'body': ?body,
+        'category': ?category,
+        'image': ?(image != null
+            ? await MultipartFile.fromFile(image.path)
+            : null),
+        'remove_image': ?(removeImage ? '1' : null),
+      }),
+    );
+    return Post.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
   }
 
   /// POST /api/v1/posts/{postId}/like
@@ -473,9 +572,22 @@ class ApiClient {
   /// content).
   Future<List<PostCategory>> postCategories() async {
     final response = await _get('/post-categories');
-    final data = (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
+    final data =
+        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
     return data
         .map((item) => PostCategory.fromJson(item as Map<String, dynamic>))
+        .toList(growable: false);
+  }
+
+  /// GET /api/v1/listing-categories — the admin-managed list the "Create a
+  /// Listing" screen picks from, not paginated (always a short reference
+  /// list, not user-generated content).
+  Future<List<ListingCategory>> listingCategories() async {
+    final response = await _get('/listing-categories');
+    final data =
+        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
+    return data
+        .map((item) => ListingCategory.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
   }
 
@@ -484,7 +596,8 @@ class ApiClient {
   /// list, not user-generated content).
   Future<List<GroupCategory>> groupCategories() async {
     final response = await _get('/group-categories');
-    final data = (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
+    final data =
+        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
     return data
         .map((item) => GroupCategory.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
@@ -779,12 +892,27 @@ class ApiClient {
     );
   }
 
+  /// GET /api/v1/events/saved — events this user has bookmarked, most
+  /// recently saved first, including ones that already ended — see
+  /// EventController::saved() on the backend.
+  Future<PaginatedResponse<Event>> savedEvents({int page = 1}) async {
+    final response = await _get(
+      '/events/saved',
+      queryParameters: {'page': page},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      Event.fromJson,
+    );
+  }
+
   /// GET /api/v1/event-categories — the admin-managed list the Events tab's
   /// filter chips and the "create an event" form pick from, not paginated
   /// (always a short reference list, not user-generated content).
   Future<List<EventCategory>> eventCategories() async {
     final response = await _get('/event-categories');
-    final data = (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
+    final data =
+        (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
     return data
         .map((item) => EventCategory.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
@@ -917,6 +1045,57 @@ class ApiClient {
     );
   }
 
+  /// POST /api/v1/device-tokens — registers (or re-registers) this device's
+  /// FCM token against the signed-in user. Safe to call repeatedly (e.g. on
+  /// every login/session-restore, and again on FCM's own token-refresh
+  /// event) — the backend upserts by token.
+  Future<void> registerDeviceToken(
+    String token, {
+    String platform = 'android',
+  }) async {
+    await _post('/device-tokens', data: {'token': token, 'platform': platform});
+  }
+
+  /// DELETE /api/v1/device-tokens — called on logout so a shared/reused
+  /// device stops receiving this user's pushes once they've signed out.
+  Future<void> unregisterDeviceToken(String token) async {
+    await _delete('/device-tokens', data: {'token': token});
+  }
+
+  /// GET /api/v1/notifications — the real in-app notification inbox,
+  /// newest first.
+  Future<PaginatedResponse<AppNotification>> notifications({
+    int page = 1,
+  }) async {
+    final response = await _get(
+      '/notifications',
+      queryParameters: {'page': page},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      AppNotification.fromJson,
+    );
+  }
+
+  /// GET /api/v1/notifications/unread-count — backs the bell icon's badge.
+  Future<int> unreadNotificationCount() async {
+    final response = await _get('/notifications/unread-count');
+    return (response.data as Map<String, dynamic>)['unread_count'] as int;
+  }
+
+  /// POST /api/v1/notifications/{notificationId}/read
+  Future<AppNotification> markNotificationRead(int notificationId) async {
+    final response = await _post('/notifications/$notificationId/read');
+    return AppNotification.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// POST /api/v1/notifications/read-all
+  Future<void> markAllNotificationsRead() async {
+    await _post('/notifications/read-all');
+  }
+
   AuthResult _parseAuthResult(Response<dynamic> response) {
     final body = response.data as Map<String, dynamic>;
 
@@ -945,9 +1124,9 @@ class ApiClient {
     }
   }
 
-  Future<Response<dynamic>> _delete(String path) async {
+  Future<Response<dynamic>> _delete(String path, {Object? data}) async {
     try {
-      return await _dio.delete(path);
+      return await _dio.delete(path, data: data);
     } on DioException catch (e) {
       throw ApiException.fromDioException(e);
     }

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/group_providers.dart';
 import '../../theme/app_colors.dart';
+import '../notifications/notifications_screen.dart';
 import '../profile/profile_screen.dart';
 import '../shell/widgets/coming_soon_view.dart';
 import 'create_group_screen.dart';
@@ -58,12 +59,6 @@ class _GroupsScreenState extends ConsumerState<GroupsScreen> {
     _debounce = Timer(_debounceDuration, () {
       ref.read(groupsFiltersProvider.notifier).setSearch(value);
     });
-  }
-
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
   }
 
   Future<void> _toggleMembership(int groupId, bool isMember) async {
@@ -160,7 +155,9 @@ class _GroupsScreenState extends ConsumerState<GroupsScreen> {
                 onAvatarTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ProfileScreen()),
                 ),
-                onNotificationsTap: () => _comingSoon('Notifications'),
+                onNotificationsTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                ),
               ),
             ),
             // Pinned so the search bar is the only thing that stays fixed
@@ -439,49 +436,88 @@ class _CreateGroupBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
     return Container(
-      padding: const EdgeInsets.all(16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.mint.withValues(alpha: 0.22),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.12)),
       ),
-      child: Row(
+      child: Stack(
         children: [
-          Container(
-            width: 44,
-            height: 44,
-            alignment: Alignment.center,
-            decoration: const BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
+          Positioned(
+            right: -14,
+            bottom: -18,
+            child: Transform.rotate(
+              angle: -0.35,
+              child: Icon(
+                Icons.eco_rounded,
+                size: 76,
+                color: AppColors.primary.withValues(alpha: 0.10),
+              ),
             ),
-            child: const Icon(Icons.add, color: Colors.white),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
               children: [
-                Text(
-                  'Create a Group',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                Container(
+                  width: 48,
+                  height: 48,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(
+                    Icons.group_add_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
                 ),
-                Text(
-                  'Start your local farming circle or niche crop club.',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.bodySmall?.copyWith(color: AppColors.textDark),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Create a Group',
+                        style: textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.textDark,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Start your local farming circle or niche crop club.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: AppColors.label,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                FilledButton(
+                  onPressed: onCreate,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.forestPanel,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    shape: const StadiumBorder(),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  child: const Text('Create'),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed: onCreate,
-            style: FilledButton.styleFrom(minimumSize: Size.zero),
-            child: const Text('Create'),
           ),
         ],
       ),

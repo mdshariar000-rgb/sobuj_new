@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_colors.dart';
+import '../../../widgets/notification_bell_button.dart';
 import '../../../widgets/user_avatar.dart';
 
 /// The Home tab's green hero header: avatar + a truthful role eyebrow (the
 /// user's own growing setup, not an invented title), the "Agro Hub" wordmark,
-/// and a time-of-day greeting. Search/notifications have no backend yet, so
-/// they're wired as "coming soon" taps rather than fabricated features.
+/// and a time-of-day greeting. Search has no backend yet, so it's wired as
+/// a "coming soon" tap; notifications opens the real inbox.
 class HomeHeroHeader extends StatelessWidget {
   const HomeHeroHeader({
     super.key,
@@ -96,13 +97,7 @@ class HomeHeroHeader extends StatelessWidget {
                     onPressed: onSearchTap,
                     icon: const Icon(Icons.search, color: Colors.white),
                   ),
-                  IconButton(
-                    onPressed: onNotificationsTap,
-                    icon: const Icon(
-                      Icons.notifications_outlined,
-                      color: Colors.white,
-                    ),
-                  ),
+                  NotificationBellButton(onTap: onNotificationsTap),
                 ],
               ),
               const SizedBox(height: 12),

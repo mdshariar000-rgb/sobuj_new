@@ -607,6 +607,83 @@ class AgroHubApiTest extends TestCase
         $this->assertDatabaseMissing('comments', ['id' => $commentId]);
     }
 
+    public function test_a_posts_owner_can_delete_a_comment_someone_else_left_on_it(): void
+    {
+        $postOwner = User::factory()->create();
+        $post = Post::factory()->create(['author_id' => $postOwner->id, 'group_id' => null]);
+
+        $commenter = User::factory()->create();
+        Sanctum::actingAs($commenter);
+        $created = $this->postJson("/api/v1/posts/{$post->id}/comments", ['body' => 'Nice plant!']);
+        $created->assertCreated();
+        $commentId = $created->json('data.id');
+
+        Sanctum::actingAs($postOwner);
+        $this->deleteJson("/api/v1/comments/{$commentId}")->assertOk();
+        $this->assertDatabaseMissing('comments', ['id' => $commentId]);
+    }
+
+    public function test_a_post_can_be_updated_by_its_author_only(): void
+    {
+        $author = User::factory()->create();
+        $post = Post::factory()->create([
+            'author_id' => $author->id,
+            'group_id' => null,
+            'body' => 'Original body',
+            'category' => 'General',
+        ]);
+
+        $other = User::factory()->create();
+        Sanctum::actingAs($other);
+        $this->patchJson("/api/v1/posts/{$post->id}", ['body' => 'Hijacked'])->assertForbidden();
+
+        Sanctum::actingAs($author);
+        $response = $this->patchJson("/api/v1/posts/{$post->id}", [
+            'body' => 'Updated body',
+            'category' => 'Harvest',
+        ]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.body', 'Updated body');
+        $response->assertJsonPath('data.category', 'Harvest');
+        $this->assertDatabaseHas('posts', [
+            'id' => $post->id,
+            'body' => 'Updated body',
+            'category' => 'Harvest',
+        ]);
+    }
+
+    public function test_updating_a_post_with_a_made_up_category_is_rejected(): void
+    {
+        $author = User::factory()->create();
+        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        Sanctum::actingAs($author);
+
+        $response = $this->patchJson("/api/v1/posts/{$post->id}", [
+            'category' => 'Not A Real Category',
+        ]);
+
+        $response->assertUnprocessable();
+        $response->assertJsonValidationErrors(['category']);
+    }
+
+    public function test_removing_a_posts_image_clears_it(): void
+    {
+        $author = User::factory()->create();
+        $post = Post::factory()->create([
+            'author_id' => $author->id,
+            'group_id' => null,
+            'image_path' => 'posts/existing.jpg',
+        ]);
+        Sanctum::actingAs($author);
+
+        $response = $this->patchJson("/api/v1/posts/{$post->id}", ['remove_image' => true]);
+
+        $response->assertOk();
+        $response->assertJsonPath('data.image_url', null);
+        $this->assertDatabaseHas('posts', ['id' => $post->id, 'image_path' => null]);
+    }
+
     // --- Events -----------------------------------------------------------
 
     public function test_a_user_can_create_a_published_event_and_others_can_rsvp(): void
@@ -685,6 +762,78 @@ class AgroHubApiTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonCount(1, 'data');
+    }
+
+    public function test_the_events_index_excludes_events_that_have_already_ended(): void
+    {
+        $upcoming = Event::factory()->create([
+            'status' => EventStatus::Published,
+            'starts_at' => now()->addDay(),
+            'ends_at' => now()->addDay()->addHours(2),
+        ]);
+        Event::factory()->create([
+            'status' => EventStatus::Published,
+            'starts_at' => now()->subDays(3),
+            'ends_at' => now()->subDays(3)->addHours(2),
+        ]);
+
+        Sanctum::actingAs(User::factory()->create());
+
+        $response = $this->getJson('/api/v1/events');
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $upcoming->id);
+    }
+
+    public function test_the_events_index_still_shows_an_event_that_is_underway_but_not_yet_ended(): void
+    {
+        $ongoing = Event::factory()->create([
+            'status' => EventStatus::Published,
+            'starts_at' => now()->subHour(),
+            'ends_at' => now()->addHour(),
+        ]);
+
+        Sanctum::actingAs(User::factory()->create());
+
+        $response = $this->getJson('/api/v1/events');
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $ongoing->id);
+    }
+
+    public function test_the_events_index_excludes_a_started_event_with_no_end_time_once_its_start_time_passes(): void
+    {
+        Event::factory()->create([
+            'status' => EventStatus::Published,
+            'starts_at' => now()->subHour(),
+            'ends_at' => null,
+        ]);
+
+        Sanctum::actingAs(User::factory()->create());
+
+        $response = $this->getJson('/api/v1/events');
+
+        $response->assertOk();
+        $response->assertJsonCount(0, 'data');
+    }
+
+    public function test_the_calendar_month_view_still_shows_expired_events_in_a_past_month(): void
+    {
+        $pastEvent = Event::factory()->create([
+            'status' => EventStatus::Published,
+            'starts_at' => '2026-06-15 18:00:00',
+            'ends_at' => '2026-06-15 20:00:00',
+        ]);
+
+        Sanctum::actingAs(User::factory()->create());
+
+        $response = $this->getJson('/api/v1/events?month=2026-06');
+
+        $response->assertOk();
+        $response->assertJsonCount(1, 'data');
+        $response->assertJsonPath('data.0.id', $pastEvent->id);
     }
 
     public function test_event_categories_are_admin_managed_and_a_made_up_one_is_rejected(): void
@@ -827,6 +976,44 @@ class AgroHubApiTest extends TestCase
         $this->deleteJson("/api/v1/events/{$event->id}/save")
             ->assertOk()
             ->assertJsonPath('data.is_saved', false);
+    }
+
+    public function test_saved_events_returns_only_what_the_user_saved_most_recent_first(): void
+    {
+        $saver = User::factory()->create();
+        Sanctum::actingAs($saver);
+
+        $first = Event::factory()->create(['status' => EventStatus::Published]);
+        $second = Event::factory()->create(['status' => EventStatus::Published]);
+        $neverSaved = Event::factory()->create(['status' => EventStatus::Published]);
+
+        $this->postJson("/api/v1/events/{$first->id}/save")->assertOk();
+        $this->postJson("/api/v1/events/{$second->id}/save")->assertOk();
+
+        $response = $this->getJson('/api/v1/events/saved');
+
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->all();
+        $this->assertSame([$second->id, $first->id], $ids);
+        $this->assertNotContains($neverSaved->id, $ids);
+        $response->assertJsonPath('data.0.is_saved', true);
+    }
+
+    public function test_saved_events_still_shows_an_event_that_has_already_ended(): void
+    {
+        $saver = User::factory()->create();
+        $event = Event::factory()->create([
+            'status' => EventStatus::Published,
+            'starts_at' => now()->subWeek(),
+            'ends_at' => now()->subWeek()->addHours(2),
+        ]);
+        $event->savedBy()->attach($saver->id);
+
+        Sanctum::actingAs($saver);
+        $response = $this->getJson('/api/v1/events/saved');
+
+        $response->assertOk();
+        $this->assertSame([$event->id], collect($response->json('data'))->pluck('id')->all());
     }
 
     public function test_the_event_detail_endpoint_returns_a_preview_of_real_attendees(): void

@@ -32,14 +32,34 @@ class ManageSettingsTest extends TestCase
             ->assertSuccessful();
     }
 
-    public function test_the_form_never_prefills_the_real_key(): void
+    public function test_the_form_prefills_the_stored_key(): void
     {
         Setting::set('gemini_api_key', 'AIzaSy-existing-secret');
         $admin = User::factory()->create(['is_admin' => true]);
         $this->actingAs($admin);
 
         Livewire::test(ManageSettings::class)
+            ->assertFormSet(['gemini_api_key' => 'AIzaSy-existing-secret']);
+    }
+
+    public function test_the_form_shows_an_empty_field_when_no_key_is_stored(): void
+    {
+        $admin = User::factory()->create(['is_admin' => true]);
+        $this->actingAs($admin);
+
+        Livewire::test(ManageSettings::class)
             ->assertFormSet(['gemini_api_key' => '']);
+    }
+
+    public function test_saving_keeps_the_stored_value_visible_in_the_form(): void
+    {
+        Setting::set('gemini_api_key', 'AIzaSy-existing-secret');
+        $admin = User::factory()->create(['is_admin' => true]);
+        $this->actingAs($admin);
+
+        Livewire::test(ManageSettings::class)
+            ->call('save')
+            ->assertFormSet(['gemini_api_key' => 'AIzaSy-existing-secret']);
     }
 
     public function test_submitting_a_key_saves_it(): void
@@ -69,7 +89,7 @@ class ManageSettingsTest extends TestCase
         $this->assertSame('AIzaSy-existing-secret', Setting::get('gemini_api_key'));
     }
 
-    public function test_stripe_secret_fields_never_prefill_but_prices_do(): void
+    public function test_stripe_secret_fields_and_prices_both_prefill(): void
     {
         Setting::set('stripe_secret_key', 'sk_test_existing');
         Setting::set('stripe_monthly_price_usd', '12.99');
@@ -78,7 +98,7 @@ class ManageSettingsTest extends TestCase
 
         Livewire::test(ManageSettings::class)
             ->assertFormSet([
-                'stripe_secret_key' => '',
+                'stripe_secret_key' => 'sk_test_existing',
                 'stripe_monthly_price_usd' => 12.99,
             ]);
     }

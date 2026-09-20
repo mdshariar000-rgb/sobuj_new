@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_colors.dart';
+import '../../../widgets/notification_bell_button.dart';
 import '../../../widgets/user_avatar.dart';
 
 /// The Events tab's green hero header. The calendar icon opens the real
-/// month calendar view (see EventsCalendarScreen); notifications has no
-/// backend yet, so that icon is still wired as a "coming soon" tap.
+/// month calendar view (see EventsCalendarScreen); the bell opens the real
+/// notification inbox.
 class EventsHeroHeader extends StatelessWidget {
   const EventsHeroHeader({
     super.key,
@@ -96,13 +97,7 @@ class EventsHeroHeader extends StatelessWidget {
                   color: Colors.white,
                 ),
               ),
-              IconButton(
-                onPressed: onNotificationsTap,
-                icon: const Icon(
-                  Icons.notifications_outlined,
-                  color: Colors.white,
-                ),
-              ),
+              NotificationBellButton(onTap: onNotificationsTap),
             ],
           ),
         ),

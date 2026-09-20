@@ -3,16 +3,19 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\GroupMemberRole;
+use App\Enums\NotificationType;
 use App\Events\GroupMessageSent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\GroupMessage\StoreGroupMessageRequest;
 use App\Http\Resources\GroupMessageResource;
 use App\Models\Group;
 use App\Services\ImageService;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class GroupMessageController extends Controller
 {
@@ -30,7 +33,10 @@ class GroupMessageController extends Controller
         // of the *oldest* messages here, since the mobile client never
         // passes a page param. Reversed back into chronological order for
         // display.
+        $hiddenUserIds = $request->user()->hiddenUserIds();
+
         $messages = $group->messages()
+            ->where(fn ($query) => $query->whereNull('sender_id')->orWhereNotIn('sender_id', $hiddenUserIds))
             ->with('sender')
             ->latest()
             ->paginate(self::PER_PAGE)
@@ -67,7 +73,7 @@ class GroupMessageController extends Controller
         return GroupMessageResource::collection($messages);
     }
 
-    public function store(StoreGroupMessageRequest $request, Group $group, ImageService $imageService): JsonResponse
+    public function store(StoreGroupMessageRequest $request, Group $group, ImageService $imageService, NotificationService $notificationService): JsonResponse
     {
         $this->authorize('sendMessage', $group);
 
@@ -92,6 +98,16 @@ class GroupMessageController extends Controller
         // HTTP response it's about to receive — see MessageController::store()
         // for the identical rationale.
         broadcast(new GroupMessageSent($message))->toOthers();
+
+        $recipients = $group->members()->where('user_id', '!=', $request->user()->id)->get();
+        $notificationService->notifyMany(
+            $recipients,
+            $request->user(),
+            NotificationType::GroupMessageReceived,
+            "{$request->user()->name} in {$group->name}",
+            $message->body !== null ? Str::limit($message->body, 100) : '📷 Photo',
+            ['group_id' => $group->id],
+        );
 
         return (new GroupMessageResource($message))->response()->setStatusCode(201);
     }

@@ -6,11 +6,11 @@ use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Navigation\NavigationGroup;
 use Filament\Pages;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
-use Filament\Widgets;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -30,16 +30,30 @@ class AdminPanelProvider extends PanelProvider
             ->colors([
                 'primary' => Color::Amber,
             ])
+            // Explicit order for the three groups every resource's own
+            // $navigationGroup resolves into (see each Resource class) —
+            // without this, Filament falls back to alphabetical group order,
+            // which put "Community" (moderation + taxonomy CRUD dumped
+            // together) ahead of "System" by accident rather than by design.
+            // No group-level icons: Filament refuses to render a group icon
+            // alongside per-item icons, and every resource below already has
+            // its own distinct one, which is more informative anyway.
+            ->navigationGroups([
+                NavigationGroup::make('Moderation'),
+                NavigationGroup::make('Categories')
+                    ->collapsed(),
+                NavigationGroup::make('System'),
+            ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\\Filament\\Pages')
             ->pages([
                 Pages\Dashboard::class,
             ])
+            // The built-in "Welcome"/account-switcher and Filament version/
+            // docs-links cards added no real information for this panel's
+            // admins — StatsOverviewWidget (auto-discovered below) is the
+            // only dashboard widget now.
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\\Filament\\Widgets')
-            ->widgets([
-                Widgets\AccountWidget::class,
-                Widgets\FilamentInfoWidget::class,
-            ])
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,

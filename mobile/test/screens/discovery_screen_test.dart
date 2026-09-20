@@ -7,6 +7,7 @@ import 'package:shobuj_mobile/models/app_user.dart';
 import 'package:shobuj_mobile/models/enums.dart';
 import 'package:shobuj_mobile/models/geo_point.dart';
 import 'package:shobuj_mobile/models/listing.dart';
+import 'package:shobuj_mobile/models/listing_category.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/models/swap_message.dart';
 import 'package:shobuj_mobile/models/swap_offer.dart';
@@ -49,7 +50,7 @@ class FakeApiClient extends ApiClient {
     required double latitude,
     required double longitude,
     double radiusKm = 10,
-    ListingType? category,
+    String? category,
     TransactionType? transactionType,
     String? search,
     String? sort,
@@ -72,6 +73,18 @@ class FakeApiClient extends ApiClient {
       lastPage: 1,
       total: listings.length,
     );
+  }
+
+  @override
+  Future<List<ListingCategory>> listingCategories() async {
+    return const [
+      ListingCategory(id: 1, name: 'Seeds & Scions'),
+      ListingCategory(id: 2, name: 'Live Plants & Saplings'),
+      ListingCategory(id: 3, name: 'Organic Fertilizers'),
+      ListingCategory(id: 4, name: 'Farm Tools & Equipment'),
+      ListingCategory(id: 5, name: 'Harvest & Produce'),
+      ListingCategory(id: 6, name: 'Compost & Soils'),
+    ];
   }
 
   @override
@@ -126,7 +139,7 @@ Listing _buildListing({
   return Listing(
     id: id,
     title: title,
-    listingType: ListingType.seedsScions,
+    listingType: 'Seeds & Scions',
     transactionType: TransactionType.swap,
     status: ListingStatus.active,
     lookingFor: lookingFor,
@@ -260,7 +273,7 @@ void main() {
     await tester.tap(find.widgetWithText(ChoiceChip, 'Seeds & Scions'));
     await tester.pumpAndSettle();
 
-    expect(fakeClient.lastCallArgs?['category'], ListingType.seedsScions);
+    expect(fakeClient.lastCallArgs?['category'], 'Seeds & Scions');
 
     // Tapping the same chip again clears the filter.
     await tester.tap(find.widgetWithText(ChoiceChip, 'Seeds & Scions'));

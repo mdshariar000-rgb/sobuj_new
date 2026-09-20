@@ -31,12 +31,16 @@ class SwapOfferController extends Controller
     public function index(Request $request): AnonymousResourceCollection
     {
         $user = $request->user();
+        $hiddenUserIds = $user->hiddenUserIds();
 
         $offers = SwapOffer::query()
             ->where(function ($query) use ($user) {
                 $query->where('requester_id', $user->id)
                     ->orWhereHas('listing', fn ($listingQuery) => $listingQuery->where('user_id', $user->id));
             })
+            // Threads with a blocked (or blocking) user drop out of the inbox.
+            ->whereNotIn('requester_id', $hiddenUserIds)
+            ->whereDoesntHave('listing', fn ($listingQuery) => $listingQuery->whereIn('user_id', $hiddenUserIds))
             ->with(['listing.photos', 'listing.user', 'requester', 'latestMessage'])
             ->withCount(['messages as unread_count' => function ($query) use ($user) {
                 $query->whereNull('read_at')
@@ -81,6 +85,8 @@ class SwapOfferController extends Controller
                 'listing_id' => ['You cannot make an offer on your own listing.'],
             ]);
         }
+
+        abort_if($user->hasBlockRelationWith($listing->user_id), 403, "You can't make an offer to this user.");
 
         $existing = SwapOffer::query()
             ->where('listing_id', $listing->id)

@@ -2,7 +2,6 @@
 
 namespace App\Http\Requests\Listing;
 
-use App\Enums\ListingType;
 use App\Enums\TransactionType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -25,7 +24,7 @@ class NearbyListingsRequest extends FormRequest
             'radius_km' => ['nullable', 'numeric', 'between:1,50'],
 
             // "category" is the public-facing name for the listing_type column.
-            'category' => ['nullable', Rule::enum(ListingType::class)],
+            'category' => ['nullable', Rule::exists('listing_categories', 'name')],
             'transaction_type' => ['nullable', Rule::enum(TransactionType::class)],
 
             'per_page' => ['nullable', 'integer', 'between:1,50'],

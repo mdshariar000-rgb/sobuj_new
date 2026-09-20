@@ -23,7 +23,7 @@ class ListingResource extends JsonResource
             'description' => $this->description,
             'condition' => $this->condition?->value,
             'condition_label' => $this->condition?->label(),
-            'listing_type' => $this->listing_type->value,
+            'listing_type' => $this->listing_type,
             'transaction_type' => $this->transaction_type->value,
             'price' => $this->price !== null ? (float) $this->price : null,
             'status' => $this->status->value,

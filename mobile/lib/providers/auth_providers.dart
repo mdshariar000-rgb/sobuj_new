@@ -6,6 +6,7 @@ import '../models/app_user.dart';
 import '../models/enums.dart';
 import '../services/api_client.dart';
 import '../services/biometric_service.dart';
+import '../services/push_notification_service.dart';
 import '../services/secure_storage_service.dart';
 import 'core_providers.dart';
 
@@ -16,14 +17,19 @@ import 'core_providers.dart';
 /// failed login attempt never flashes the rest of the app into an error/
 /// loading view.
 class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
-  AuthController(this._apiClient, this._secureStorage, this._biometricService)
-    : super(const AsyncValue.loading()) {
+  AuthController(
+    this._apiClient,
+    this._secureStorage,
+    this._biometricService,
+    this._pushService,
+  ) : super(const AsyncValue.loading()) {
     _restoreSession();
   }
 
   final ApiClient _apiClient;
   final SecureStorageService _secureStorage;
   final BiometricService _biometricService;
+  final PushNotificationService _pushService;
 
   Future<void> _restoreSession() async {
     final token = await _secureStorage.readToken();
@@ -36,6 +42,7 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
     try {
       final user = await _apiClient.me();
       state = AsyncValue.data(user);
+      _pushService.requestPermissionAndRegister(_apiClient);
     } catch (_) {
       // Token is missing, expired, revoked, or the account is suspended —
       // either way there's nothing useful to restore. Fall back to signed out
@@ -49,6 +56,7 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
     final result = await _apiClient.login(email: email, password: password);
     await _secureStorage.saveToken(result.token);
     state = AsyncValue.data(result.user);
+    _pushService.requestPermissionAndRegister(_apiClient);
   }
 
   Future<void> register({
@@ -58,6 +66,7 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
     required String passwordConfirmation,
     required double latitude,
     required double longitude,
+    String? locationLabel,
     String? experienceLevel,
     String? growingSetup,
   }) async {
@@ -68,20 +77,39 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
       passwordConfirmation: passwordConfirmation,
       latitude: latitude,
       longitude: longitude,
+      locationLabel: locationLabel,
       experienceLevel: experienceLevel,
       growingSetup: growingSetup,
     );
     await _secureStorage.saveToken(result.token);
     state = AsyncValue.data(result.user);
+    _pushService.requestPermissionAndRegister(_apiClient);
   }
 
   Future<void> logout() async {
+    // Best-effort, and must happen while the auth token is still valid —
+    // unregistering the device is itself an authenticated call.
+    await _pushService.unregister(_apiClient);
+
     try {
       await _apiClient.logout();
     } catch (_) {
       // Best-effort: still sign out locally even if the network call fails
       // (e.g. no connectivity, or the token was already revoked server-side).
     }
+    await _secureStorage.clearToken();
+    state = const AsyncValue.data(null);
+  }
+
+  /// Permanently deletes the account on the server, then signs out locally.
+  /// Throws [ApiException] (wrong password, or a server-side failure) without
+  /// touching local session state, so the account stays signed in on failure.
+  /// No device-token unregister here: deleting the account cascades its
+  /// device tokens away server-side, and that call would need a token that no
+  /// longer exists.
+  Future<void> deleteAccount({required String password}) async {
+    await _apiClient.deleteAccount(password: password);
+    await _secureStorage.clearBiometricCredentials();
     await _secureStorage.clearToken();
     state = const AsyncValue.data(null);
   }
@@ -174,5 +202,6 @@ final authControllerProvider =
         ref.watch(apiClientProvider),
         ref.watch(secureStorageProvider),
         ref.watch(biometricServiceProvider),
+        ref.watch(pushNotificationServiceProvider),
       );
     });

@@ -27,6 +27,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _locationLabelController = TextEditingController();
   final _locationFieldKey = GlobalKey();
 
   ExperienceLevel? _experienceLevel;
@@ -51,6 +52,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _locationLabelController.dispose();
     super.dispose();
   }
 
@@ -90,6 +92,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             passwordConfirmation: _confirmPasswordController.text,
             latitude: position.latitude,
             longitude: position.longitude,
+            locationLabel: _locationLabelController.text.trim().isEmpty
+                ? null
+                : _locationLabelController.text.trim(),
             experienceLevel: _experienceLevel?.value,
             growingSetup: _growingSetup?.value,
           );
@@ -230,6 +235,29 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         KeyedSubtree(
                           key: _locationFieldKey,
                           child: const LocationCaptureField(),
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            const _FieldLabel('Primary Location'),
+                            const Spacer(),
+                            Text(
+                              'optional',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(color: AppColors.textMuted),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        TextFormField(
+                          key: const Key('register-location-label-field'),
+                          controller: _locationLabelController,
+                          textInputAction: TextInputAction.next,
+                          decoration: InputDecoration(
+                            hintText: 'e.g. Dhanmondi, Dhaka',
+                            prefixIcon: const Icon(Icons.place_outlined),
+                            errorText: _serverError('location_label'),
+                          ),
                         ),
                         const SizedBox(height: 20),
                         const _FieldLabel('Full Name'),

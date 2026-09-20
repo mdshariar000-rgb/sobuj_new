@@ -8,11 +8,13 @@ import '../../models/app_user.dart';
 import '../../models/enums.dart';
 import '../../models/listing.dart';
 import '../../models/listing_photo.dart';
+import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/discovery_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
 import 'seller_profile_screen.dart';
 import 'swap_offer_thread_screen.dart';
@@ -84,6 +86,54 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
         : _listing.transactionType.label;
     SharePlus.instance.share(
       ShareParams(text: '${_listing.title} — $priceText on Agro Hub'),
+    );
+  }
+
+  void _showSafetyActions() {
+    final owner = _listing.owner;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('report-listing'),
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Report this listing'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                showReportSheet(
+                  context,
+                  target: ReportTarget.listing,
+                  targetId: _listing.id,
+                );
+              },
+            ),
+            if (owner != null)
+              ListTile(
+                key: const Key('block-seller'),
+                leading: const Icon(Icons.block, color: AppColors.error),
+                title: Text(
+                  'Block ${owner.name}',
+                  style: const TextStyle(color: AppColors.error),
+                ),
+                onTap: () async {
+                  Navigator.of(sheetContext).pop();
+                  final navigator = Navigator.of(context);
+                  final blocked = await confirmAndBlockUser(
+                    context,
+                    userId: owner.id,
+                    userName: owner.name,
+                  );
+                  if (blocked && navigator.mounted) navigator.pop();
+                },
+              ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -438,6 +488,14 @@ class _ListingDetailScreenState extends ConsumerState<ListingDetailScreen> {
                   iconColor: isSaved ? AppColors.mint : Colors.white,
                   onTap: _toggleSave,
                 ),
+                if (!isOwnListing) ...[
+                  const SizedBox(width: 10),
+                  _FloatingIconButton(
+                    key: const Key('listing-safety-button'),
+                    icon: Icons.flag_outlined,
+                    onTap: _showSafetyActions,
+                  ),
+                ],
               ],
             ),
           ),
@@ -613,6 +671,7 @@ class _StatusPill extends StatelessWidget {
 
 class _FloatingIconButton extends StatelessWidget {
   const _FloatingIconButton({
+    super.key,
     required this.icon,
     required this.onTap,
     this.iconColor = Colors.white,
@@ -704,7 +763,9 @@ class _SellerCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
+          GestureDetector(
+            onTap: () => openUserProfile(context, owner.id),
+            child: Row(
             children: [
               Stack(
                 clipBehavior: Clip.none,
@@ -759,16 +820,13 @@ class _SellerCard extends StatelessWidget {
                 ),
               ),
             ],
+            ),
           ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => SellerProfileScreen(userId: owner.id),
-                ),
-              ),
+              onPressed: () => openUserProfile(context, owner.id),
               icon: const Icon(Icons.person_outline, size: 16),
               label: const Text('View Seller Profile'),
             ),

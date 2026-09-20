@@ -43,6 +43,18 @@ class SecureStorageService {
     return (email: email, password: password);
   }
 
+  static String _aiConsentKey(int userId) => 'ai_consent_$userId';
+
+  /// Whether [userId] has agreed to have their Agri-AI messages and photos
+  /// sent to Google's Gemini API. Keyed per account so a shared device asks
+  /// each person separately. Not a secret, but kept in the same store as the
+  /// rest of the per-account session state rather than adding a second one.
+  Future<bool> readAiConsent(int userId) async =>
+      await _storage.read(key: _aiConsentKey(userId)) == 'true';
+
+  Future<void> saveAiConsent(int userId) =>
+      _storage.write(key: _aiConsentKey(userId), value: 'true');
+
   Future<void> clearBiometricCredentials() async {
     await _storage.delete(key: _biometricEmailKey);
     await _storage.delete(key: _biometricPasswordKey);

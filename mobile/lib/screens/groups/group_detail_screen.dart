@@ -6,12 +6,16 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../models/group.dart';
 import '../../models/post.dart';
+import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/group_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
+import '../discovery/seller_profile_screen.dart';
 import '../home/post_detail_screen.dart';
+import '../home/widgets/edit_post_sheet.dart';
 import '../home/widgets/post_card.dart';
 import 'create_group_post_screen.dart';
 import 'group_chat_screen.dart';
@@ -188,6 +192,17 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen>
                 icon: const Icon(Icons.chat_bubble_outline),
                 tooltip: 'Group Chat',
               ),
+              if (!group.myRoleIsAdmin)
+                IconButton(
+                  key: const Key('group-report-button'),
+                  onPressed: () => showReportSheet(
+                    context,
+                    target: ReportTarget.group,
+                    targetId: group.id,
+                  ),
+                  icon: const Icon(Icons.flag_outlined),
+                  tooltip: 'Report group',
+                ),
               if (group.myRoleIsAdmin)
                 IconButton(
                   key: const Key('group-detail-settings-button'),
@@ -585,6 +600,27 @@ class _AllPostsTab extends ConsumerWidget {
       }
     }
 
+    void editPost(Post post) {
+      showEditPostSheet(
+        context,
+        post: post,
+        onSubmit: (ref, body, category, image, removeImage) => ref
+            .read(groupPostsProvider(group.id).notifier)
+            .updatePost(
+              post.id,
+              body: body,
+              category: category,
+              image: image,
+              removeImage: removeImage,
+            ),
+      );
+    }
+
+    Future<void> deletePost(int postId) async {
+      if (!await confirmDeletePost(context) || !context.mounted) return;
+      await ref.read(groupPostsProvider(group.id).notifier).deletePost(postId);
+    }
+
     return RefreshIndicator(
       onRefresh: () => ref.read(groupPostsProvider(group.id).notifier).refresh(),
       child: postsAsync.when(
@@ -664,10 +700,11 @@ class _AllPostsTab extends ConsumerWidget {
                         builder: (_) => PostDetailScreen(post: post),
                       ),
                     ),
+                    onEdit: post.author?.id == currentUserId
+                        ? () => editPost(post)
+                        : null,
                     onDelete: post.author?.id == currentUserId
-                        ? () => ref
-                              .read(groupPostsProvider(group.id).notifier)
-                              .deletePost(post.id)
+                        ? () => deletePost(post.id)
                         : null,
                     onLike: () => toggleLike(post),
                     onApprove: group.myRoleIsAdmin && post.isPendingApproval
@@ -787,6 +824,7 @@ class _MembersTab extends ConsumerWidget {
                 ? 'Admin'
                 : member.growingSetup?.label ?? member.experienceLevel?.label;
             return ListTile(
+              onTap: () => openUserProfile(context, member.id),
               leading: UserAvatar(name: member.name, avatarUrl: member.avatarUrl),
               title: Row(
                 children: [

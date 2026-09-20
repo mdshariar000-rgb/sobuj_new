@@ -28,9 +28,17 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Agro Hub uses the camera so you can photograph plants for listings, posts, and Agri-AI diagnosis.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Agro Hub accesses your photos so you can attach pictures to listings, posts, messages, and your profile.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Shobuj uses your location to show you plant listings and swaps nearby.</string>
-	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Shobuj uses your location to show you plant listings and swaps nearby.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

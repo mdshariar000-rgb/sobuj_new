@@ -33,7 +33,7 @@ class Listing {
   final String? variety;
   final String? description;
   final ListingCondition? condition;
-  final ListingType listingType;
+  final String listingType;
   final TransactionType transactionType;
   final double? price;
   final ListingStatus status;
@@ -93,7 +93,7 @@ class Listing {
       condition: json['condition'] != null
           ? ListingCondition.fromValue(json['condition'] as String)
           : null,
-      listingType: ListingType.fromValue(json['listing_type'] as String),
+      listingType: json['listing_type'] as String,
       transactionType: TransactionType.fromValue(
         json['transaction_type'] as String,
       ),

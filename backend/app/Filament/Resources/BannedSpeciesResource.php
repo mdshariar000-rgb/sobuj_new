@@ -25,9 +25,11 @@ class BannedSpeciesResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-shield-exclamation';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationGroup = 'Moderation';
 
     protected static ?string $navigationLabel = 'Banned Species';
+
+    protected static ?int $navigationSort = 6;
 
     public static function form(Form $form): Form
     {

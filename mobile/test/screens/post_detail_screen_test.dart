@@ -17,6 +17,8 @@ Post _buildPost({
   int commentsCount = 0,
   int likesCount = 0,
   bool likedByMe = false,
+  int authorId = 2,
+  String authorName = 'Rina',
 }) {
   return Post(
     id: id,
@@ -24,7 +26,7 @@ Post _buildPost({
     commentsCount: commentsCount,
     likesCount: likesCount,
     likedByMe: likedByMe,
-    author: buildFakeUser(id: 2, name: 'Rina'),
+    author: buildFakeUser(id: authorId, name: authorName),
     createdAt: DateTime.now().subtract(const Duration(hours: 1)),
   );
 }
@@ -214,6 +216,95 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(controller.position.pixels, controller.position.maxScrollExtent);
+    },
+  );
+
+  testWidgets(
+    "the post owner can delete a comment left by someone else on their own post",
+    (tester) async {
+      final post = _buildPost(authorId: 1, authorName: 'Me', commentsCount: 1);
+      final fakeClient = FakeApiClient()
+        ..postCommentsResult = PaginatedResponse(
+          data: [
+            Comment(
+              id: 5,
+              postId: 1,
+              body: 'A comment from someone else',
+              author: buildFakeUser(id: 2, name: 'Rina'),
+              createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
+            ),
+          ],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        );
+
+      await _pumpPostDetail(tester, fakeClient, post);
+
+      // Someone else's comment gets a ⋮ menu (Delete/Report/Block) — the post
+      // owner's Delete option lives there.
+      await tester.tap(find.byKey(const Key('comment-menu-5')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete comment'), findsOneWidget);
+      expect(find.text('Report comment'), findsOneWidget);
+
+      await tester.tap(find.text('Delete comment'));
+      await tester.pumpAndSettle();
+
+      expect(fakeClient.deleteCommentCalled, isTrue);
+    },
+  );
+
+  testWidgets(
+    "a comment's author can delete their own comment even on someone else's post",
+    (tester) async {
+      final post = _buildPost(authorId: 2, authorName: 'Rina', commentsCount: 1);
+      final fakeClient = FakeApiClient()
+        ..postCommentsResult = PaginatedResponse(
+          data: [
+            Comment(
+              id: 5,
+              postId: 1,
+              body: 'My own comment',
+              author: buildFakeUser(id: 1, name: 'Me'),
+              createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
+            ),
+          ],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        );
+
+      await _pumpPostDetail(tester, fakeClient, post);
+
+      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    "a comment can't be deleted by someone who is neither its author nor the post owner",
+    (tester) async {
+      final post = _buildPost(authorId: 3, authorName: 'Someone Else');
+      final fakeClient = FakeApiClient()
+        ..postCommentsResult = PaginatedResponse(
+          data: [
+            Comment(
+              id: 5,
+              postId: 1,
+              body: 'Not my comment or my post',
+              author: buildFakeUser(id: 2, name: 'Rina'),
+              createdAt: DateTime.now().subtract(const Duration(minutes: 5)),
+            ),
+          ],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        );
+
+      await _pumpPostDetail(tester, fakeClient, post);
+
+      expect(find.byIcon(Icons.delete_outline), findsNothing);
     },
   );
 }

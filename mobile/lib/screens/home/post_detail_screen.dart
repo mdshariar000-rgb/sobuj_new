@@ -4,11 +4,16 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/comment.dart';
 import '../../models/post.dart';
+import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/group_providers.dart';
 import '../../providers/post_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/safety_actions.dart';
+import '../../widgets/user_avatar.dart';
+import '../discovery/seller_profile_screen.dart';
+import 'widgets/edit_post_sheet.dart';
 import 'widgets/post_card.dart';
 
 /// A single post plus its comment thread — reached by tapping a [PostCard]
@@ -132,6 +137,48 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     _updateCommentsCountInOrigin(commentsCount);
   }
 
+  void _editPost() {
+    showEditPostSheet(
+      context,
+      post: _post,
+      onSubmit: (ref, body, category, image, removeImage) async {
+        final updated = _post.groupId == null
+            ? await ref
+                  .read(homeFeedProvider.notifier)
+                  .updatePost(
+                    _post.id,
+                    body: body,
+                    category: category,
+                    image: image,
+                    removeImage: removeImage,
+                  )
+            : await ref
+                  .read(groupPostsProvider(_post.groupId!).notifier)
+                  .updatePost(
+                    _post.id,
+                    body: body,
+                    category: category,
+                    image: image,
+                    removeImage: removeImage,
+                  );
+        if (mounted) setState(() => _post = updated);
+      },
+    );
+  }
+
+  Future<void> _deletePost() async {
+    if (!await confirmDeletePost(context) || !mounted) return;
+
+    if (_post.groupId == null) {
+      await ref.read(homeFeedProvider.notifier).deletePost(_post.id);
+    } else {
+      await ref
+          .read(groupPostsProvider(_post.groupId!).notifier)
+          .deletePost(_post.id);
+    }
+    if (mounted) Navigator.of(context).pop();
+  }
+
   Future<void> _toggleLike() async {
     final postBeforeToggle = _post;
     final wasLiked = _post.likedByMe ?? false;
@@ -173,7 +220,14 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
             child: ListView(
               controller: _scrollController,
               children: [
-                PostCard(post: _post, onLike: _toggleLike),
+                PostCard(
+                  post: _post,
+                  onEdit: _post.author?.id == currentUserId ? _editPost : null,
+                  onDelete: _post.author?.id == currentUserId
+                      ? _deletePost
+                      : null,
+                  onLike: _toggleLike,
+                ),
                 const Padding(
                   padding: EdgeInsets.fromLTRB(20, 8, 20, 4),
                   child: Text(
@@ -222,7 +276,10 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                         for (final comment in topLevel) ...[
                           _CommentTile(
                             comment: comment,
-                            canDelete: comment.author?.id == currentUserId,
+                            isOwn: comment.author?.id == currentUserId,
+                            canDelete:
+                                comment.author?.id == currentUserId ||
+                                _post.author?.id == currentUserId,
                             onDelete: () => _deleteComment(comment.id),
                             onReply: () => _startReply(comment),
                           ),
@@ -232,7 +289,10 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                               padding: const EdgeInsets.only(left: 32),
                               child: _CommentTile(
                                 comment: reply,
-                                canDelete: reply.author?.id == currentUserId,
+                                isOwn: reply.author?.id == currentUserId,
+                                canDelete:
+                                    reply.author?.id == currentUserId ||
+                                    _post.author?.id == currentUserId,
                                 onDelete: () => _deleteComment(reply.id),
                                 onReply: () => _startReply(reply),
                               ),
@@ -319,12 +379,17 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
 class _CommentTile extends StatelessWidget {
   const _CommentTile({
     required this.comment,
+    required this.isOwn,
     required this.canDelete,
     required this.onDelete,
     required this.onReply,
   });
 
   final Comment comment;
+
+  /// Whether the signed-in user wrote this comment — own comments get a plain
+  /// delete button; everyone else's get a Report/Block menu instead.
+  final bool isOwn;
   final bool canDelete;
   final VoidCallback onDelete;
   final VoidCallback onReply;
@@ -334,18 +399,21 @@ class _CommentTile extends StatelessWidget {
     final authorName = comment.author?.name ?? 'Unknown grower';
 
     return ListTile(
-      leading: CircleAvatar(
-        radius: comment.isReply ? 14 : 16,
-        backgroundColor: AppColors.surfaceMuted,
-        child: Text(
-          authorName.isNotEmpty ? authorName[0].toUpperCase() : '?',
-          style: const TextStyle(
-            color: AppColors.primary,
-            fontWeight: FontWeight.w700,
-          ),
+      leading: GestureDetector(
+        onTap: () => openUserProfile(context, comment.author?.id),
+        child: UserAvatar(
+          name: authorName,
+          avatarUrl: comment.author?.avatarUrl,
+          radius: comment.isReply ? 14 : 16,
         ),
       ),
-      title: Text(authorName, style: const TextStyle(fontWeight: FontWeight.w700)),
+      title: GestureDetector(
+        onTap: () => openUserProfile(context, comment.author?.id),
+        child: Text(
+          authorName,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+      ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -369,7 +437,11 @@ class _CommentTile extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Row(
+          // A Wrap rather than a Row: the trailing ⋮ menu narrows the tile, and
+          // on a small screen the timestamp + Reply must flow rather than clip.
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
             children: [
               Text(
                 timeago.format(comment.createdAt),
@@ -378,7 +450,6 @@ class _CommentTile extends StatelessWidget {
                   fontSize: 12,
                 ),
               ),
-              const SizedBox(width: 12),
               InkWell(
                 onTap: onReply,
                 child: const Text(
@@ -394,12 +465,53 @@ class _CommentTile extends StatelessWidget {
           ),
         ],
       ),
-      trailing: canDelete
+      trailing: _buildTrailing(context),
+    );
+  }
+
+  Widget? _buildTrailing(BuildContext context) {
+    if (isOwn) {
+      return canDelete
           ? IconButton(
               icon: const Icon(Icons.delete_outline, size: 20),
               onPressed: onDelete,
             )
-          : null,
+          : null;
+    }
+
+    final author = comment.author;
+
+    return PopupMenuButton<String>(
+      key: Key('comment-menu-${comment.id}'),
+      icon: const Icon(Icons.more_vert, size: 20),
+      tooltip: 'Comment options',
+      onSelected: (action) {
+        switch (action) {
+          case 'delete':
+            onDelete();
+          case 'report':
+            showReportSheet(
+              context,
+              target: ReportTarget.comment,
+              targetId: comment.id,
+            );
+          case 'block':
+            if (author != null) {
+              confirmAndBlockUser(
+                context,
+                userId: author.id,
+                userName: author.name,
+              );
+            }
+        }
+      },
+      itemBuilder: (context) => [
+        if (canDelete)
+          const PopupMenuItem(value: 'delete', child: Text('Delete comment')),
+        const PopupMenuItem(value: 'report', child: Text('Report comment')),
+        if (author != null)
+          PopupMenuItem(value: 'block', child: Text('Block ${author.name}')),
+      ],
     );
   }
 }

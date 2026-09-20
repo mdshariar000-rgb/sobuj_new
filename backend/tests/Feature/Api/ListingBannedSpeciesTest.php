@@ -20,7 +20,7 @@ class ListingBannedSpeciesTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Japanese Knotweed cuttings, well established',
-            'listing_type' => 'live_plants',
+            'listing_type' => 'Live Plants & Saplings',
             'transaction_type' => 'swap',
         ]);
 
@@ -38,7 +38,7 @@ class ListingBannedSpeciesTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Cherry tomato seeds',
-            'listing_type' => 'seeds_scions',
+            'listing_type' => 'Seeds & Scions',
             'transaction_type' => 'swap',
         ]);
 

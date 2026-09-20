@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_colors.dart';
+import '../../../widgets/notification_bell_button.dart';
 import '../../../widgets/user_avatar.dart';
 
-/// The Groups tab's green hero header — no notifications backend exists yet,
-/// so the bell is wired as a "coming soon" tap like the other tabs' headers.
+/// The Groups tab's green hero header — the bell opens the real
+/// notification inbox, same as the other tabs' headers.
 class GroupsHeroHeader extends StatelessWidget {
   const GroupsHeroHeader({
     super.key,
@@ -71,13 +72,7 @@ class GroupsHeroHeader extends StatelessWidget {
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: onNotificationsTap,
-                icon: const Icon(
-                  Icons.notifications_outlined,
-                  color: Colors.white,
-                ),
-              ),
+              NotificationBellButton(onTap: onNotificationsTap),
             ],
           ),
         ),

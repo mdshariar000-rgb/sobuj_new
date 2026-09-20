@@ -9,6 +9,7 @@ import '../../providers/auth_providers.dart';
 import '../../providers/discovery_providers.dart';
 import '../../theme/app_colors.dart';
 import 'create_listing_screen.dart';
+import 'seller_profile_screen.dart';
 import 'swap_offer_thread_screen.dart';
 import 'widgets/category_chips.dart' show categoryIcon;
 import 'widgets/create_listing_banner.dart';
@@ -531,11 +532,17 @@ class _ConversationCard extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            otherParty?.name ?? 'Unknown grower',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          child: GestureDetector(
+                            onTap: () =>
+                                openUserProfile(context, otherParty?.id),
+                            child: Text(
+                              otherParty?.name ?? 'Unknown grower',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
                           ),
                         ),
                         Text(

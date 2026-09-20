@@ -8,6 +8,7 @@ use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Http\Resources\UserResource;
 use App\Models\User;
+use App\Services\AccountDeletionService;
 use App\Services\ImageService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -31,6 +32,7 @@ class AuthController extends Controller
                 'password' => $data['password'],
                 'experience_level' => $data['experience_level'] ?? null,
                 'growing_setup' => $data['growing_setup'] ?? null,
+                'location_label' => $data['location_label'] ?? null,
             ]);
 
             $user->setLocation((float) $data['latitude'], (float) $data['longitude']);
@@ -126,6 +128,37 @@ class AuthController extends Controller
         ]);
 
         return (new UserResource($user))->asSelf();
+    }
+
+    /**
+     * Permanently delete the caller's own account and personal data (App Store
+     * Guideline 5.1.1(v)). Requires the current password so a stolen session token
+     * alone can't wipe an account. Not behind `not_suspended` — a suspended user must
+     * still be able to leave and have their data removed.
+     */
+    public function destroy(Request $request, AccountDeletionService $accountDeletion): JsonResponse
+    {
+        $request->validate(['password' => ['required', 'string']]);
+
+        $user = $request->user();
+
+        if (! Hash::check($request->input('password'), $user->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['The password is incorrect.'],
+            ]);
+        }
+
+        try {
+            $accountDeletion->delete($user);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'Your account could not be deleted right now. Please try again shortly.',
+            ], 503);
+        }
+
+        return response()->json(['message' => 'Your account has been deleted.']);
     }
 
     /**

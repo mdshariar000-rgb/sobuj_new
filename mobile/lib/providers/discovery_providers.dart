@@ -7,6 +7,7 @@ import '../config/app_config.dart';
 import '../models/app_user.dart';
 import '../models/enums.dart';
 import '../models/listing.dart';
+import '../models/listing_category.dart';
 import '../models/swap_message.dart';
 import '../models/swap_offer.dart';
 import '../services/api_client.dart';
@@ -16,6 +17,14 @@ import 'core_providers.dart';
 import 'location_providers.dart';
 
 enum DiscoveryViewMode { list, map }
+
+/// The admin-managed marketplace category list — powers both the Discovery
+/// filter chips and the "Create a Listing" category picker.
+final listingCategoriesProvider =
+    FutureProvider.autoDispose<List<ListingCategory>>((ref) async {
+      final apiClient = ref.watch(apiClientProvider);
+      return apiClient.listingCategories();
+    });
 
 /// Real (server-side, via `sort=`), not a client-side re-order — see
 /// DiscoveryController::nearby().
@@ -40,14 +49,14 @@ class DiscoveryFilters {
   });
 
   final String searchTerm;
-  final ListingType? category;
+  final String? category;
   final TransactionType? transactionType;
   final double radiusKm;
   final DiscoverySort sort;
 
   DiscoveryFilters copyWith({
     String? searchTerm,
-    ListingType? category,
+    String? category,
     bool clearCategory = false,
     TransactionType? transactionType,
     bool clearTransactionType = false,
@@ -72,7 +81,7 @@ class DiscoveryFiltersNotifier extends StateNotifier<DiscoveryFilters> {
   void setSearchTerm(String term) => state = state.copyWith(searchTerm: term);
 
   /// Tapping the already-selected category chip clears it (toggle behavior).
-  void toggleCategory(ListingType category) {
+  void toggleCategory(String category) {
     state = state.category == category
         ? state.copyWith(clearCategory: true)
         : state.copyWith(category: category);

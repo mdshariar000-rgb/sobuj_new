@@ -3,10 +3,10 @@
 namespace App\Filament\Resources;
 
 use App\Enums\ListingStatus;
-use App\Enums\ListingType;
 use App\Enums\TransactionType;
 use App\Filament\Resources\ListingResource\Pages;
 use App\Models\Listing;
+use App\Models\ListingCategory;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -35,7 +35,9 @@ class ListingResource extends Resource
 
     protected static ?string $navigationLabel = 'Listing Moderation';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationGroup = 'Moderation';
+
+    protected static ?int $navigationSort = 5;
 
     /**
      * Listings are created by users through the mobile app, not by admins — this
@@ -57,7 +59,8 @@ class ListingResource extends Resource
                 ->maxLength(255),
 
             Select::make('listing_type')
-                ->options(self::enumOptions(ListingType::cases()))
+                ->label('Category')
+                ->options(fn () => ListingCategory::query()->orderBy('name')->pluck('name', 'name')->all())
                 ->native(false)
                 ->required(),
 
@@ -104,8 +107,8 @@ class ListingResource extends Resource
                     ->sortable(),
 
                 TextColumn::make('listing_type')
-                    ->badge()
-                    ->formatStateUsing(fn (ListingType $state) => $state->label()),
+                    ->label('Category')
+                    ->badge(),
 
                 TextColumn::make('transaction_type')
                     ->badge()
@@ -154,7 +157,7 @@ class ListingResource extends Resource
 
                 SelectFilter::make('listing_type')
                     ->label('Category')
-                    ->options(self::enumOptions(ListingType::cases())),
+                    ->options(fn () => ListingCategory::query()->orderBy('name')->pluck('name', 'name')->all()),
             ])
             ->actions([
                 ActionGroup::make([
@@ -242,7 +245,7 @@ class ListingResource extends Resource
     }
 
     /**
-     * @param  array<int, ListingType|TransactionType|ListingStatus>  $cases
+     * @param  array<int, TransactionType|ListingStatus>  $cases
      * @return array<string, string>
      */
     private static function enumOptions(array $cases): array

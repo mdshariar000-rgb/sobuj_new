@@ -10,11 +10,13 @@ import '../../providers/post_providers.dart';
 import '../../providers/shell_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
+import '../notifications/notifications_screen.dart';
 import '../profile/profile_screen.dart';
 import '../shell/widgets/coming_soon_view.dart';
 import 'post_detail_screen.dart';
 import 'widgets/agri_ai_banner.dart';
 import 'widgets/create_post_sheet.dart';
+import 'widgets/edit_post_sheet.dart';
 import 'widgets/field_diagnostics_card.dart';
 import 'widgets/home_hero_header.dart';
 import 'widgets/post_card.dart';
@@ -77,12 +79,6 @@ class _HomeFeedScreenState extends ConsumerState<HomeFeedScreen> {
     }
   }
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
-  }
-
   void _openAgriAi() =>
       ref.read(selectedTabIndexProvider.notifier).state = 3;
 
@@ -96,6 +92,27 @@ class _HomeFeedScreenState extends ConsumerState<HomeFeedScreen> {
         ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
+  }
+
+  void _editPost(Post post) {
+    showEditPostSheet(
+      context,
+      post: post,
+      onSubmit: (ref, body, category, image, removeImage) => ref
+          .read(homeFeedProvider.notifier)
+          .updatePost(
+            post.id,
+            body: body,
+            category: category,
+            image: image,
+            removeImage: removeImage,
+          ),
+    );
+  }
+
+  Future<void> _deletePost(int postId) async {
+    if (!await confirmDeletePost(context) || !mounted) return;
+    await ref.read(homeFeedProvider.notifier).deletePost(postId);
   }
 
   @override
@@ -135,7 +152,9 @@ class _HomeFeedScreenState extends ConsumerState<HomeFeedScreen> {
                   MaterialPageRoute(builder: (_) => const ProfileScreen()),
                 ),
                 onSearchTap: _toggleSearch,
-                onNotificationsTap: () => _comingSoon('Notifications'),
+                onNotificationsTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                ),
               ),
             ),
             if (_isSearching)
@@ -295,10 +314,11 @@ class _HomeFeedScreenState extends ConsumerState<HomeFeedScreen> {
                           builder: (_) => PostDetailScreen(post: post),
                         ),
                       ),
+                      onEdit: post.author?.id == currentUser?.id
+                          ? () => _editPost(post)
+                          : null,
                       onDelete: post.author?.id == currentUser?.id
-                          ? () => ref
-                                .read(homeFeedProvider.notifier)
-                                .deletePost(post.id)
+                          ? () => _deletePost(post.id)
                           : null,
                       onLike: () => _toggleLike(post),
                     );

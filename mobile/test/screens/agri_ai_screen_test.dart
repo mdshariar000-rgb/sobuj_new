@@ -67,10 +67,12 @@ AiMessage _buildMessage({
 
 Future<void> _pumpAgriAiScreen(
   WidgetTester tester,
-  FakeApiClient fakeClient,
-) async {
+  FakeApiClient fakeClient, {
+  bool consented = true,
+}) async {
   final fakeStorage = FakeSecureStorageService();
   await fakeStorage.saveToken('existing-token');
+  if (consented) await fakeStorage.saveAiConsent(1);
   fakeClient.meResult = buildFakeUser(id: 1, name: 'Me');
 
   await tester.pumpWidget(
@@ -91,6 +93,21 @@ void main() {
   ) async {
     await _pumpAgriAiScreen(tester, FakeApiClient());
 
+    expect(find.text('Ask FloraAI anything'), findsOneWidget);
+  });
+
+  testWidgets('asks for consent before the first chat and then shows it', (
+    tester,
+  ) async {
+    await _pumpAgriAiScreen(tester, FakeApiClient(), consented: false);
+
+    expect(find.text('Before you chat with FloraAI'), findsOneWidget);
+    expect(find.text('Ask FloraAI anything'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ai-consent-agree')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Before you chat with FloraAI'), findsNothing);
     expect(find.text('Ask FloraAI anything'), findsOneWidget);
   });
 

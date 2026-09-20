@@ -33,6 +33,7 @@ class HomeFeedController extends Controller
         $posts = Post::query()
             ->generalFeed()
             ->where('moderation_status', PostModerationStatus::Visible)
+            ->whereNotIn('author_id', $request->user()->hiddenUserIds())
             ->when($request->filled('search'), function ($query) use ($request) {
                 $term = '%'.$request->string('search').'%';
                 $query->where(function ($query) use ($term) {

@@ -8,12 +8,15 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/group.dart';
 import '../../models/group_message.dart';
+import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/group_providers.dart';
 import '../../services/api_exception.dart';
 import '../../services/group_realtime_channel.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
+import '../discovery/seller_profile_screen.dart';
 
 bool _isSameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
@@ -465,39 +468,49 @@ class _PinnedBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pinnedByName = group.pinnedBy?.name;
-    return Container(
-      width: double.infinity,
-      color: AppColors.surfaceMuted,
-      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.push_pin, size: 16, color: AppColors.primary),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text.rich(
-              TextSpan(
-                style: const TextStyle(fontSize: 12.5, color: AppColors.textDark),
-                children: [
-                  if (pinnedByName != null)
-                    TextSpan(
-                      text: 'Pinned by $pinnedByName: ',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  TextSpan(text: group.pinnedMessage),
-                ],
+    return InkWell(
+      onTap: () => openUserProfile(context, group.pinnedBy?.id),
+      child: Container(
+        width: double.infinity,
+        color: AppColors.surfaceMuted,
+        padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.push_pin, size: 16, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    color: AppColors.textDark,
+                  ),
+                  children: [
+                    if (pinnedByName != null)
+                      TextSpan(
+                        text: 'Pinned by $pinnedByName: ',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    TextSpan(text: group.pinnedMessage),
+                  ],
+                ),
               ),
             ),
-          ),
-          if (canUnpin)
-            InkWell(
-              onTap: onUnpin,
-              child: const Padding(
-                padding: EdgeInsets.only(left: 4),
-                child: Icon(Icons.close, size: 16, color: AppColors.textMuted),
+            if (canUnpin)
+              InkWell(
+                onTap: onUnpin,
+                child: const Padding(
+                  padding: EdgeInsets.only(left: 4),
+                  child: Icon(
+                    Icons.close,
+                    size: 16,
+                    color: AppColors.textMuted,
+                  ),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -580,7 +593,9 @@ class _MessageBubble extends StatelessWidget {
                   0,
                   4,
                 ),
-                child: Row(
+                child: GestureDetector(
+                  onTap: () => openUserProfile(context, sender?.id),
+                  child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
@@ -613,6 +628,7 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ],
                   ],
+                  ),
                 ),
               ),
             if (message.localImage != null)
@@ -690,14 +706,72 @@ class _MessageBubble extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        UserAvatar(
-          name: sender?.name ?? '?',
-          avatarUrl: sender?.avatarUrl,
-          radius: 12,
+        GestureDetector(
+          onTap: () => openUserProfile(context, sender?.id),
+          child: UserAvatar(
+            name: sender?.name ?? '?',
+            avatarUrl: sender?.avatarUrl,
+            radius: 12,
+          ),
         ),
         const SizedBox(width: 6),
-        Flexible(child: bubble),
+        // Long-press a message from another member to report it or block them.
+        Flexible(
+          child: GestureDetector(
+            key: Key('message-bubble-${message.id}'),
+            onLongPress: message.isPending
+                ? null
+                : () => _showMessageActions(context),
+            child: bubble,
+          ),
+        ),
       ],
+    );
+  }
+
+  void _showMessageActions(BuildContext context) {
+    final sender = message.sender;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              key: const Key('report-message'),
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Report message'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                showReportSheet(
+                  context,
+                  target: ReportTarget.groupMessage,
+                  targetId: message.id,
+                );
+              },
+            ),
+            if (sender != null)
+              ListTile(
+                key: const Key('block-sender'),
+                leading: const Icon(Icons.block, color: AppColors.error),
+                title: Text(
+                  'Block ${sender.name}',
+                  style: const TextStyle(color: AppColors.error),
+                ),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  confirmAndBlockUser(
+                    context,
+                    userId: sender.id,
+                    userName: sender.name,
+                  );
+                },
+              ),
+          ],
+        ),
+      ),
     );
   }
 }

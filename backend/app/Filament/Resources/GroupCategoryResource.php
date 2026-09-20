@@ -25,9 +25,11 @@ class GroupCategoryResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-tag';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationGroup = 'Categories';
 
     protected static ?string $navigationLabel = 'Group Categories';
+
+    protected static ?int $navigationSort = 1;
 
     public static function form(Form $form): Form
     {

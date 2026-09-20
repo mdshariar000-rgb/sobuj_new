@@ -142,6 +142,26 @@ class HomeFeedNotifier extends StateNotifier<AsyncValue<HomeFeedState>> {
     }
   }
 
+  /// Throws [ApiException] on failure — the calling screen handles it,
+  /// matching createPost()'s convention.
+  Future<Post> updatePost(
+    int postId, {
+    String? body,
+    String? category,
+    File? image,
+    bool removeImage = false,
+  }) async {
+    final updated = await _apiClient.updatePost(
+      postId,
+      body: body,
+      category: category,
+      image: image,
+      removeImage: removeImage,
+    );
+    _replacePost(updated);
+    return updated;
+  }
+
   /// Toggles optimistically first — the like button should feel instant —
   /// then reconciles with the server's real counts, rolling back on failure.
   Future<void> toggleLike(Post post) async {
@@ -288,6 +308,34 @@ class AuthorPostsNotifier extends StateNotifier<AsyncValue<List<Post>>> {
       _replacePost(post);
       rethrow;
     }
+  }
+
+  Future<void> deletePost(int postId) async {
+    await _apiClient.deletePost(postId);
+    final current = state.valueOrNull;
+    if (current != null) {
+      state = AsyncValue.data(
+        current.where((post) => post.id != postId).toList(),
+      );
+    }
+  }
+
+  Future<Post> updatePost(
+    int postId, {
+    String? body,
+    String? category,
+    File? image,
+    bool removeImage = false,
+  }) async {
+    final updated = await _apiClient.updatePost(
+      postId,
+      body: body,
+      category: category,
+      image: image,
+      removeImage: removeImage,
+    );
+    _replacePost(updated);
+    return updated;
   }
 
   void _replacePost(Post updated) {

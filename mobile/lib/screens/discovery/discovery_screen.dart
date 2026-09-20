@@ -450,11 +450,13 @@ class _FilterSheet extends ConsumerWidget {
                     }
                   },
                 ),
-                for (final type in ListingType.values)
+                for (final category in ref
+                    .watch(listingCategoriesProvider)
+                    .valueOrNull ?? const [])
                   ChoiceChip(
-                    label: Text(type.label),
-                    selected: filters.category == type,
-                    onSelected: (_) => notifier.toggleCategory(type),
+                    label: Text(category.name),
+                    selected: filters.category == category.name,
+                    onSelected: (_) => notifier.toggleCategory(category.name),
                   ),
               ],
             ),

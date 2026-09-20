@@ -53,6 +53,10 @@ class DiscoveryErrorView extends StatelessWidget {
         Icons.location_disabled,
         'Location permission is required to find listings near you.',
       ),
+      LocationTimeoutException() => (
+        Icons.location_searching,
+        'Could not get your location — check your signal and try again.',
+      ),
       ApiException(:final message) => (Icons.cloud_off, message),
       _ => (Icons.error_outline, 'Something went wrong. Please try again.'),
     };

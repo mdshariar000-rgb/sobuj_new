@@ -31,6 +31,11 @@ class RegisterRequest extends FormRequest
             'latitude' => ['required', 'numeric', 'between:-90,90'],
             'longitude' => ['required', 'numeric', 'between:-180,180'],
 
+            // Free-text label the user types themselves (e.g. "Dhanmondi, Dhaka") —
+            // separate from the required lat/lng point above, same field
+            // UpdateProfileRequest accepts post-registration (see User::location_label).
+            'location_label' => ['nullable', 'string', 'max:255'],
+
             'experience_level' => ['nullable', Rule::enum(ExperienceLevel::class)],
             'growing_setup' => ['nullable', Rule::enum(GrowingSetup::class)],
 

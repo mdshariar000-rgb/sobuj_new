@@ -12,8 +12,13 @@ class CommentPolicy
         return $user->is_admin ? true : null;
     }
 
+    /**
+     * The comment's own author, or the author of the post it's on (a post
+     * owner can moderate comments left on their own post, same as most
+     * social apps) — either may delete it.
+     */
     public function delete(User $user, Comment $comment): bool
     {
-        return $user->id === $comment->author_id;
+        return $user->id === $comment->author_id || $user->id === $comment->post->author_id;
     }
 }

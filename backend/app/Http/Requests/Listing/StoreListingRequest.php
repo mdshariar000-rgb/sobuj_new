@@ -3,7 +3,6 @@
 namespace App\Http\Requests\Listing;
 
 use App\Enums\ListingCondition;
-use App\Enums\ListingType;
 use App\Enums\TransactionType;
 use App\Rules\NotBannedSpecies;
 use Illuminate\Foundation\Http\FormRequest;
@@ -26,7 +25,7 @@ class StoreListingRequest extends FormRequest
             'variety' => ['nullable', 'string', 'max:255', new NotBannedSpecies],
             'description' => ['nullable', 'string', 'max:2000'],
             'condition' => ['nullable', Rule::enum(ListingCondition::class)],
-            'listing_type' => ['required', Rule::enum(ListingType::class)],
+            'listing_type' => ['required', Rule::exists('listing_categories', 'name')],
             'transaction_type' => ['required', Rule::enum(TransactionType::class)],
 
             // Mirrors chk_listings_price_required_for_paid_transaction at the DB layer.

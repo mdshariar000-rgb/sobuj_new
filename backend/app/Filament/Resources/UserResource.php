@@ -29,7 +29,11 @@ class UserResource extends Resource
 
     protected static ?string $navigationIcon = 'heroicon-o-users';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationLabel = 'Users';
+
+    protected static ?string $navigationGroup = 'Moderation';
+
+    protected static ?int $navigationSort = 2;
 
     /**
      * Consumer accounts always self-register through the mobile app (which captures

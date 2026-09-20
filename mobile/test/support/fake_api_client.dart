@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:shobuj_mobile/models/agri_ai_config.dart';
+import 'package:shobuj_mobile/models/app_notification.dart';
 import 'package:shobuj_mobile/models/app_user.dart';
 import 'package:shobuj_mobile/models/ai_conversation.dart';
 import 'package:shobuj_mobile/models/comment.dart';
@@ -15,9 +16,11 @@ import 'package:shobuj_mobile/models/group_join_request.dart';
 import 'package:shobuj_mobile/models/group_member.dart';
 import 'package:shobuj_mobile/models/group_message.dart';
 import 'package:shobuj_mobile/models/listing.dart';
+import 'package:shobuj_mobile/models/listing_category.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/models/post.dart';
 import 'package:shobuj_mobile/models/post_category.dart';
+import 'package:shobuj_mobile/models/report.dart';
 import 'package:shobuj_mobile/models/subscription_status.dart';
 import 'package:shobuj_mobile/models/swap_message.dart';
 import 'package:shobuj_mobile/models/swap_offer.dart';
@@ -56,6 +59,7 @@ class FakeApiClient extends ApiClient {
 
   AuthResult? registerResult;
   ApiException? registerError;
+  String? lastRegisterLocationLabel;
 
   bool logoutCalled = false;
 
@@ -67,6 +71,34 @@ class FakeApiClient extends ApiClient {
       message: 'FakeApiClient.me: no result configured',
       statusCode: 401,
     );
+  }
+
+  AppUser? userProfileResult;
+  ApiException? userProfileError;
+  PaginatedResponse<Listing>? userListingsResult;
+  ApiException? userListingsError;
+
+  /// Backs [SellerProfileScreen] — the app-wide "view this person's
+  /// profile" destination, reached from any avatar/name tap.
+  @override
+  Future<AppUser> userProfile(int userId) async {
+    if (userProfileError != null) throw userProfileError!;
+    return userProfileResult ?? buildFakeUser(id: userId, name: 'Grower');
+  }
+
+  @override
+  Future<PaginatedResponse<Listing>> userListings(
+    int userId, {
+    int page = 1,
+  }) async {
+    if (userListingsError != null) throw userListingsError!;
+    return userListingsResult ??
+        const PaginatedResponse(
+          data: [],
+          currentPage: 1,
+          lastPage: 1,
+          total: 0,
+        );
   }
 
   @override
@@ -86,9 +118,11 @@ class FakeApiClient extends ApiClient {
     required String passwordConfirmation,
     required double latitude,
     required double longitude,
+    String? locationLabel,
     String? experienceLevel,
     String? growingSetup,
   }) async {
+    lastRegisterLocationLabel = locationLabel;
     if (registerError != null) throw registerError!;
     return registerResult!;
   }
@@ -96,6 +130,62 @@ class FakeApiClient extends ApiClient {
   @override
   Future<void> logout() async {
     logoutCalled = true;
+  }
+
+  String? lastDeletedAccountPassword;
+  ApiException? deleteAccountError;
+
+  @override
+  Future<void> deleteAccount({required String password}) async {
+    lastDeletedAccountPassword = password;
+    if (deleteAccountError != null) throw deleteAccountError!;
+  }
+
+  final reportsFiled =
+      <({ReportTarget target, int targetId, ReportReason reason, String? details})>[];
+  ApiException? reportError;
+
+  @override
+  Future<void> reportContent({
+    required ReportTarget target,
+    required int targetId,
+    required ReportReason reason,
+    String? details,
+  }) async {
+    if (reportError != null) throw reportError!;
+    reportsFiled.add((
+      target: target,
+      targetId: targetId,
+      reason: reason,
+      details: details,
+    ));
+  }
+
+  final blockedUserIds = <int>[];
+  final unblockedUserIds = <int>[];
+  List<AppUser> blockedUsersResult = [];
+
+  @override
+  Future<void> blockUser(int userId) async {
+    blockedUserIds.add(userId);
+  }
+
+  @override
+  Future<void> unblockUser(int userId) async {
+    unblockedUserIds.add(userId);
+    blockedUsersResult = blockedUsersResult
+        .where((user) => user.id != userId)
+        .toList();
+  }
+
+  @override
+  Future<PaginatedResponse<AppUser>> blockedUsers({int page = 1}) async {
+    return PaginatedResponse(
+      data: blockedUsersResult,
+      currentPage: 1,
+      lastPage: 1,
+      total: blockedUsersResult.length,
+    );
   }
 
   /// Defaults to an empty result so tests that land on the Discovery screen
@@ -106,7 +196,7 @@ class FakeApiClient extends ApiClient {
     required double latitude,
     required double longitude,
     double radiusKm = 10,
-    ListingType? category,
+    String? category,
     TransactionType? transactionType,
     String? search,
     String? sort,
@@ -238,6 +328,29 @@ class FakeApiClient extends ApiClient {
     deletePostCalled = true;
   }
 
+  Post? updatePostResult;
+  ApiException? updatePostError;
+  int? lastUpdatePostId;
+  String? lastUpdatePostBody;
+  String? lastUpdatePostCategory;
+  bool? lastUpdatePostRemoveImage;
+
+  @override
+  Future<Post> updatePost(
+    int postId, {
+    String? body,
+    String? category,
+    File? image,
+    bool removeImage = false,
+  }) async {
+    lastUpdatePostId = postId;
+    lastUpdatePostBody = body;
+    lastUpdatePostCategory = category;
+    lastUpdatePostRemoveImage = removeImage;
+    if (updatePostError != null) throw updatePostError!;
+    return updatePostResult!;
+  }
+
   Post? likePostResult;
   Post? unlikePostResult;
   ApiException? likePostError;
@@ -296,6 +409,27 @@ class FakeApiClient extends ApiClient {
   @override
   Future<void> deleteComment(int commentId) async {
     deleteCommentCalled = true;
+  }
+
+  List<ListingCategory>? listingCategoriesResult;
+  ApiException? listingCategoriesError;
+
+  /// Defaults to a real-looking non-empty list for the same reason as
+  /// [groupCategories] — reachable by default so tests that land on a screen
+  /// using it as a side effect (e.g. the Discovery category chips or the
+  /// create-listing category picker) don't need to stub it.
+  @override
+  Future<List<ListingCategory>> listingCategories() async {
+    if (listingCategoriesError != null) throw listingCategoriesError!;
+    return listingCategoriesResult ??
+        const [
+          ListingCategory(id: 1, name: 'Seeds & Scions'),
+          ListingCategory(id: 2, name: 'Live Plants & Saplings'),
+          ListingCategory(id: 3, name: 'Organic Fertilizers'),
+          ListingCategory(id: 4, name: 'Farm Tools & Equipment'),
+          ListingCategory(id: 5, name: 'Harvest & Produce'),
+          ListingCategory(id: 6, name: 'Compost & Soils'),
+        ];
   }
 
   List<GroupCategory>? groupCategoriesResult;
@@ -799,5 +933,82 @@ class FakeApiClient extends ApiClient {
     unsaveEventCalled = true;
     if (unsaveEventError != null) throw unsaveEventError!;
     return unsaveEventResult!;
+  }
+
+  String? lastRegisteredDeviceToken;
+  String? lastUnregisteredDeviceToken;
+
+  @override
+  Future<void> registerDeviceToken(
+    String token, {
+    String platform = 'android',
+  }) async {
+    lastRegisteredDeviceToken = token;
+  }
+
+  @override
+  Future<void> unregisterDeviceToken(String token) async {
+    lastUnregisteredDeviceToken = token;
+  }
+
+  PaginatedResponse<AppNotification>? notificationsResult;
+  ApiException? notificationsError;
+
+  @override
+  Future<PaginatedResponse<AppNotification>> notifications({
+    int page = 1,
+  }) async {
+    if (notificationsError != null) throw notificationsError!;
+    return notificationsResult ??
+        const PaginatedResponse(
+          data: [],
+          currentPage: 1,
+          lastPage: 1,
+          total: 0,
+        );
+  }
+
+  int unreadNotificationCountResult = 0;
+  ApiException? unreadNotificationCountError;
+
+  @override
+  Future<int> unreadNotificationCount() async {
+    if (unreadNotificationCountError != null)
+      throw unreadNotificationCountError!;
+    return unreadNotificationCountResult;
+  }
+
+  AppNotification? markNotificationReadResult;
+  int? lastMarkedReadNotificationId;
+
+  @override
+  Future<AppNotification> markNotificationRead(int notificationId) async {
+    lastMarkedReadNotificationId = notificationId;
+    return markNotificationReadResult!;
+  }
+
+  bool markAllNotificationsReadCalled = false;
+
+  @override
+  Future<void> markAllNotificationsRead() async {
+    markAllNotificationsReadCalled = true;
+  }
+
+  Post? postResult;
+  ApiException? postError;
+
+  @override
+  Future<Post> post(int postId) async {
+    if (postError != null) throw postError!;
+    return postResult!;
+  }
+
+  SwapOffer? swapOfferResult;
+  ApiException? swapOfferError;
+
+  @override
+  Future<SwapOffer> swapOffer(int swapOfferId) async {
+    if (swapOfferError != null) throw swapOfferError!;
+    return swapOfferResult!;
   }
 }

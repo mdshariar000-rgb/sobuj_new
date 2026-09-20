@@ -1,25 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../models/enums.dart';
 import '../../../providers/discovery_providers.dart';
 import '../../../theme/app_colors.dart';
 
-IconData categoryIcon(ListingType type) {
-  switch (type) {
-    case ListingType.seedsScions:
-      return Icons.grain;
-    case ListingType.livePlants:
-      return Icons.local_florist_outlined;
-    case ListingType.organicFertilizers:
-      return Icons.science_outlined;
-    case ListingType.farmTools:
-      return Icons.handyman_outlined;
-    case ListingType.harvestProduce:
-      return Icons.agriculture_outlined;
-    case ListingType.compostSoils:
-      return Icons.compost_outlined;
+/// A small decorative icon keyed to a handful of category strings the admin
+/// panel's Listing Categories list is seeded with — purely cosmetic pairing
+/// for a real, existing category value (never invents one that isn't there).
+/// Anything that doesn't match falls back to a generic marketplace icon.
+IconData categoryIcon(String? category) {
+  final normalized = category?.toLowerCase() ?? '';
+  if (normalized.contains('seed')) return Icons.grain;
+  if (normalized.contains('plant')) return Icons.local_florist_outlined;
+  if (normalized.contains('fertiliz')) return Icons.science_outlined;
+  if (normalized.contains('tool') || normalized.contains('equipment')) {
+    return Icons.handyman_outlined;
   }
+  if (normalized.contains('harvest') || normalized.contains('produce')) {
+    return Icons.agriculture_outlined;
+  }
+  if (normalized.contains('compost') || normalized.contains('soil')) {
+    return Icons.compost_outlined;
+  }
+  return Icons.category_outlined;
 }
 
 class CategoryChips extends ConsumerWidget {
@@ -30,13 +33,15 @@ class CategoryChips extends ConsumerWidget {
     final selected = ref.watch(
       discoveryFiltersProvider.select((filters) => filters.category),
     );
+    final categoriesAsync = ref.watch(listingCategoriesProvider);
+    final categories = categoriesAsync.valueOrNull ?? const [];
 
     return SizedBox(
       height: 40,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: ListingType.values.length + 1,
+        itemCount: categories.length + 1,
         separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           if (index == 0) {
@@ -52,16 +57,16 @@ class CategoryChips extends ConsumerWidget {
             );
           }
 
-          final type = ListingType.values[index - 1];
-          final isSelected = selected == type;
+          final category = categories[index - 1];
+          final isSelected = selected == category.name;
 
           return ChoiceChip(
-            avatar: Icon(categoryIcon(type), size: 16),
-            label: Text(type.label),
+            avatar: Icon(categoryIcon(category.name), size: 16),
+            label: Text(category.name),
             selected: isSelected,
             onSelected: (_) => ref
                 .read(discoveryFiltersProvider.notifier)
-                .toggleCategory(type),
+                .toggleCategory(category.name),
           );
         },
       ),

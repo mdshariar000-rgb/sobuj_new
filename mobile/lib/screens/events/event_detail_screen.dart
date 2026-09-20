@@ -8,8 +8,11 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../models/app_user.dart';
 import '../../models/event.dart';
 import '../../models/event_enums.dart';
+import '../../models/report.dart';
+import '../../providers/auth_providers.dart';
 import '../../providers/event_providers.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/seller_profile_screen.dart';
 
@@ -317,6 +320,20 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
                   iconColor: isSaved ? AppColors.mint : Colors.white,
                   onTap: _isTogglingSaved ? null : _toggleSaved,
                 ),
+                if (event.host != null &&
+                    event.host!.id !=
+                        ref.watch(authControllerProvider).valueOrNull?.id) ...[
+                  const SizedBox(width: 10),
+                  _HeroIconButton(
+                    key: const Key('event-report-button'),
+                    icon: Icons.flag_outlined,
+                    onTap: () => showReportSheet(
+                      context,
+                      target: ReportTarget.event,
+                      targetId: event.id,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -762,12 +779,19 @@ class _AttendeeAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
+    return GestureDetector(
+      onTap: () => openUserProfile(context, user.id),
+      child: Container(
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
+        child: UserAvatar(
+          name: user.name,
+          avatarUrl: user.avatarUrl,
+          radius: 18,
+        ),
       ),
-      child: UserAvatar(name: user.name, avatarUrl: user.avatarUrl, radius: 18),
     );
   }
 }

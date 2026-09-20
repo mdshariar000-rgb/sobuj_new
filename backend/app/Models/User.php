@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
@@ -187,6 +188,19 @@ class User extends Authenticatable implements FilamentUser
     }
 
     /**
+     * Events this user has tapped the bookmark/save icon on — the "Saved
+     * Events" list. The pivot only carries `created_at` (when saved), not
+     * `updated_at`, so timestamps aren't auto-managed here.
+     *
+     * @return BelongsToMany<Event>
+     */
+    public function savedEvents(): BelongsToMany
+    {
+        return $this->belongsToMany(Event::class, 'saved_events')
+            ->withPivot('created_at');
+    }
+
+    /**
      * Swap offers this user has made on other users' listings.
      *
      * @return HasMany<SwapOffer>
@@ -254,4 +268,66 @@ class User extends Authenticatable implements FilamentUser
     {
         return $this->hasMany(AiConversation::class);
     }
+
+    /**
+     * This user's real in-app notification inbox — see AppNotification for
+     * why it isn't named notifications()/backed by the dormant Notifiable
+     * trait already `use`d above.
+     *
+     * @return HasMany<AppNotification>
+     */
+    public function appNotifications(): HasMany
+    {
+        return $this->hasMany(AppNotification::class, 'recipient_id');
+    }
+
+    /**
+     * @return HasMany<DeviceToken>
+     */
+    public function deviceTokens(): HasMany
+    {
+        return $this->hasMany(DeviceToken::class);
+    }
+
+    /**
+     * Users this account has blocked. The pivot only carries `created_at`, so
+     * timestamps aren't auto-managed — pass it explicitly when attaching.
+     *
+     * @return BelongsToMany<User>
+     */
+    public function blockedUsers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'user_blocks', 'blocker_id', 'blocked_id')
+            ->withPivot('created_at');
+    }
+
+    /**
+     * Every user id this account should neither see nor interact with: the users it
+     * blocked plus the users who blocked it. Blocking is deliberately mutual in
+     * effect — otherwise a blocked user could still watch the person who blocked them.
+     * Memoized for the request (a User instance lives for one request).
+     *
+     * @return list<int>
+     */
+    public function hiddenUserIds(): array
+    {
+        if ($this->hiddenUserIdsCache === null) {
+            $blocked = DB::table('user_blocks')->where('blocker_id', $this->id)->pluck('blocked_id');
+            $blockedBy = DB::table('user_blocks')->where('blocked_id', $this->id)->pluck('blocker_id');
+
+            $this->hiddenUserIdsCache = $blocked->merge($blockedBy)->map(fn ($id) => (int) $id)->unique()->values()->all();
+        }
+
+        return $this->hiddenUserIdsCache;
+    }
+
+    public function hasBlockRelationWith(User|int $other): bool
+    {
+        return in_array($other instanceof User ? $other->id : $other, $this->hiddenUserIds(), true);
+    }
+
+    /**
+     * @var list<int>|null
+     */
+    private ?array $hiddenUserIdsCache = null;
 }

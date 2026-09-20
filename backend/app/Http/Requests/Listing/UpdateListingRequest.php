@@ -4,7 +4,6 @@ namespace App\Http\Requests\Listing;
 
 use App\Enums\ListingCondition;
 use App\Enums\ListingStatus;
-use App\Enums\ListingType;
 use App\Enums\TransactionType;
 use App\Rules\NotBannedSpecies;
 use Illuminate\Foundation\Http\FormRequest;
@@ -27,7 +26,7 @@ class UpdateListingRequest extends FormRequest
             'variety' => ['sometimes', 'nullable', 'string', 'max:255', new NotBannedSpecies],
             'description' => ['sometimes', 'nullable', 'string', 'max:2000'],
             'condition' => ['sometimes', 'nullable', Rule::enum(ListingCondition::class)],
-            'listing_type' => ['sometimes', Rule::enum(ListingType::class)],
+            'listing_type' => ['sometimes', Rule::exists('listing_categories', 'name')],
             'transaction_type' => ['sometimes', Rule::enum(TransactionType::class)],
 
             'price' => [

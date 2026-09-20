@@ -36,7 +36,7 @@ Listing _buildListing({required int id, required String title, double? price}) {
   return Listing(
     id: id,
     title: title,
-    listingType: ListingType.seedsScions,
+    listingType: 'Seeds & Scions',
     transactionType: price != null ? TransactionType.sell : TransactionType.swap,
     status: ListingStatus.active,
     price: price,

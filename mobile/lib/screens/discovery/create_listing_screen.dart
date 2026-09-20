@@ -39,7 +39,7 @@ class _CreateListingScreenState extends ConsumerState<CreateListingScreen> {
   final _descriptionController = TextEditingController();
   final _handoverController = TextEditingController();
 
-  ListingType _listingType = ListingType.seedsScions;
+  String? _listingType;
   TransactionType _transactionType = TransactionType.swap;
   ListingCondition? _condition;
   bool _openToBartering = false;
@@ -107,7 +107,7 @@ class _CreateListingScreenState extends ConsumerState<CreateListingScreen> {
                 ? null
                 : _descriptionController.text.trim(),
             condition: _transactionType.isRequest ? null : _condition,
-            listingType: _listingType,
+            listingType: _listingType!,
             transactionType: _effectiveTransactionType,
             price: _priceController.text.trim().isEmpty
                 ? null
@@ -133,6 +133,46 @@ class _CreateListingScreenState extends ConsumerState<CreateListingScreen> {
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  /// A dropdown over the real, admin-managed category list (see
+  /// ListingCategoryResource/ListingCategoryController on the backend) —
+  /// marketplace categories are curated from the admin panel, not typed
+  /// freely here.
+  Widget _buildCategoryField() {
+    final categoriesAsync = ref.watch(listingCategoriesProvider);
+
+    return categoriesAsync.when(
+      loading: () => const InputDecorator(
+        decoration: InputDecoration(labelText: 'Category *', enabled: false),
+        child: Text(
+          'Loading categories…',
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+      ),
+      error: (error, _) => const InputDecorator(
+        decoration: InputDecoration(labelText: 'Category *', enabled: false),
+        child: Text(
+          'Could not load categories',
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+      ),
+      data: (categories) => DropdownButtonFormField<String>(
+        key: const Key('create-listing-category-field'),
+        initialValue: _listingType,
+        decoration: const InputDecoration(labelText: 'Category *'),
+        items: categories
+            .map(
+              (category) => DropdownMenuItem(
+                value: category.name,
+                child: Text(category.name),
+              ),
+            )
+            .toList(),
+        validator: (value) => value == null ? 'Select a category.' : null,
+        onChanged: (value) => setState(() => _listingType = value),
+      ),
+    );
   }
 
   @override
@@ -238,24 +278,7 @@ class _CreateListingScreenState extends ConsumerState<CreateListingScreen> {
                         ),
                       ],
                       const SizedBox(height: 14),
-                      DropdownButtonFormField<ListingType>(
-                        key: const Key('create-listing-category-field'),
-                        initialValue: _listingType,
-                        decoration: const InputDecoration(
-                          labelText: 'Category *',
-                        ),
-                        items: ListingType.values
-                            .map(
-                              (type) => DropdownMenuItem(
-                                value: type,
-                                child: Text(type.label),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) => setState(
-                          () => _listingType = value ?? _listingType,
-                        ),
-                      ),
+                      _buildCategoryField(),
                     ],
                   ),
                 ),

@@ -267,4 +267,64 @@ void main() {
       expect(await fakeStorage.readToken(), 'new-token');
     },
   );
+
+  testWidgets(
+    'a typed primary location is sent with registration, and is optional when left blank',
+    (tester) async {
+      final fakeClient = FakeApiClient()
+        ..registerResult = AuthResult(
+          user: buildFakeUser(),
+          token: 'new-token',
+        );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            apiClientProvider.overrideWithValue(fakeClient),
+            secureStorageProvider.overrideWithValue(FakeSecureStorageService()),
+            deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+          ],
+          child: const MaterialApp(home: RegisterScreen()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await _fillValidForm(tester);
+      await tester.enterText(
+        find.byKey(const Key('register-location-label-field')),
+        'Dhanmondi, Dhaka',
+      );
+      await tester.pumpAndSettle();
+      await _tapSubmit(tester);
+      await tester.pumpAndSettle();
+
+      expect(fakeClient.lastRegisterLocationLabel, 'Dhanmondi, Dhaka');
+    },
+  );
+
+  testWidgets('registering without typing a primary location still succeeds', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()
+      ..registerResult = AuthResult(user: buildFakeUser(), token: 'new-token');
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeClient),
+          secureStorageProvider.overrideWithValue(FakeSecureStorageService()),
+          deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+        ],
+        child: const MaterialApp(home: RegisterScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _fillValidForm(tester);
+    await _tapSubmit(tester);
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.lastRegisterLocationLabel, isNull);
+    expect(find.textContaining('We need your location'), findsNothing);
+  });
 }

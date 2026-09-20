@@ -8,6 +8,7 @@ import '../../../models/event.dart';
 import '../../../models/event_enums.dart';
 import '../../../providers/event_providers.dart';
 import '../../../theme/app_colors.dart';
+import '../../discovery/seller_profile_screen.dart';
 
 IconData _formatIcon(EventFormat format) {
   switch (format) {
@@ -21,10 +22,21 @@ IconData _formatIcon(EventFormat format) {
 }
 
 class EventCard extends ConsumerWidget {
-  const EventCard({super.key, required this.event, this.onTap});
+  const EventCard({
+    super.key,
+    required this.event,
+    this.onTap,
+    this.onToggleSave,
+  });
 
   final Event event;
   final VoidCallback? onTap;
+
+  /// Overrides the default save/unsave behavior (which mutates
+  /// [eventsListProvider]) — e.g. the Saved Events screen passes one that
+  /// removes the event from its own list instead, since that list isn't
+  /// backed by eventsListProvider.
+  final VoidCallback? onToggleSave;
 
   /// The reference design's "By {group}" line — only shown when the event is
   /// actually attached to a real group (no fabricated affiliations).
@@ -134,7 +146,8 @@ class EventCard extends ConsumerWidget {
                         ),
                       ),
                       IconButton(
-                        onPressed: () => _toggleSaved(context, ref),
+                        onPressed:
+                            onToggleSave ?? () => _toggleSaved(context, ref),
                         icon: Icon(
                           (event.isSaved ?? false)
                               ? Icons.bookmark
@@ -211,23 +224,28 @@ class EventCard extends ConsumerWidget {
                   ],
                   if (hostLine != null) ...[
                     const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        const Icon(
-                          Icons.groups_outlined,
-                          size: 14,
-                          color: AppColors.textMuted,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            hostLine,
-                            style: theme.textTheme.bodySmall,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                    GestureDetector(
+                      onTap: event.group == null
+                          ? () => openUserProfile(context, event.host?.id)
+                          : null,
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.groups_outlined,
+                            size: 14,
+                            color: AppColors.textMuted,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              hostLine,
+                              style: theme.textTheme.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                   const SizedBox(height: 12),
@@ -246,13 +264,12 @@ class EventCard extends ConsumerWidget {
                                   const SizedBox(width: 4),
                                   Text(
                                     "You're ${event.myRsvpStatus!.label}",
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: AppColors.primary,
-                                          fontWeight: FontWeight.w700,
-                                        ),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w700,
+                                    ),
                                   ),
-                                ]
+                                ],
                               )
                             : event.attendeesCount != null
                             ? Row(
@@ -266,11 +283,10 @@ class EventCard extends ConsumerWidget {
                                   const SizedBox(width: 4),
                                   Text(
                                     '${event.attendeesCount} going',
-                                    style: theme.textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: AppColors.textMuted,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: AppColors.textMuted,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ],
                               )
@@ -327,7 +343,11 @@ class _Pill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: dark ? Colors.white : AppColors.forestDark),
+          Icon(
+            icon,
+            size: 12,
+            color: dark ? Colors.white : AppColors.forestDark,
+          ),
           const SizedBox(width: 4),
           Text(
             label,

@@ -33,7 +33,9 @@ class PostResource extends Resource
 
     protected static ?string $navigationLabel = 'Posts';
 
-    protected static ?string $navigationGroup = 'Community';
+    protected static ?string $navigationGroup = 'Moderation';
+
+    protected static ?int $navigationSort = 4;
 
     public static function canCreate(): bool
     {

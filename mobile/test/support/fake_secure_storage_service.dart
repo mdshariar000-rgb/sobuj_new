@@ -31,6 +31,15 @@ class FakeSecureStorageService implements SecureStorageService {
     return (email: _biometricEmail!, password: _biometricPassword!);
   }
 
+  final _aiConsentUserIds = <int>{};
+
+  @override
+  Future<bool> readAiConsent(int userId) async =>
+      _aiConsentUserIds.contains(userId);
+
+  @override
+  Future<void> saveAiConsent(int userId) async => _aiConsentUserIds.add(userId);
+
   @override
   Future<void> clearBiometricCredentials() async {
     _biometricEmail = null;

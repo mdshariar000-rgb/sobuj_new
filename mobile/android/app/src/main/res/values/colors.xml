@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches AppColors.forestDark in lib/theme/app_colors.dart — the native
+         launch screen's background must match the Flutter-side splash screen
+         (screens/splash/splash_screen.dart) exactly, or the app flashes white
+         then jumps to dark green on cold start. -->
+    <color name="forest_dark">#FF0B1A14</color>
+</resources>

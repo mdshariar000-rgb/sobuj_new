@@ -51,7 +51,7 @@ Listing _buildListing({
   return Listing(
     id: id,
     title: title,
-    listingType: ListingType.seedsScions,
+    listingType: 'Seeds & Scions',
     transactionType: price != null
         ? TransactionType.sell
         : TransactionType.swap,

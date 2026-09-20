@@ -26,6 +26,8 @@ class SubscriptionResource extends Resource
 
     protected static ?string $navigationGroup = 'System';
 
+    protected static ?int $navigationSort = 2;
+
     public static function canCreate(): bool
     {
         return false;
