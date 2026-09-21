@@ -17,6 +17,18 @@ Mobile (run from `mobile/`):
 - `flutter analyze` (3 known style infos), `flutter test` (all pass).
 - Release APK: `flutter build apk --release --dart-define=API_BASE_URL=https://codecell.site/api/v1`. The API URL is baked in at build time. Bump `version:` in `pubspec.yaml` first (currently `1.0.0+41`).
 
+## Local backend setup (Mac or any new machine)
+
+XAMPP is not required. You need PHP 8.3 (with `gd`, `pdo_mysql`, `intl`, `mbstring`, `bcmath`, `zip`), Composer, and **MySQL 8** (tests use spatial columns; SQLite will not work). On a Mac the easiest route is Laravel Herd (PHP + Composer) plus DBngin or `brew install mysql`; Docker/Sail also works.
+
+1. `cd backend && composer install`
+2. `cp .env.example .env`; set `DB_CONNECTION=mysql` and a **local** database name/user/password (the default in `.env.example` is SQLite — change it). The test suite wipes this database, so never use production credentials.
+3. `php artisan key:generate && php artisan migrate`
+4. `php artisan test` (expect only the known failures listed above) and `php artisan serve` to run the API locally.
+5. To point the mobile app at your local API: `flutter run --dart-define=API_BASE_URL=http://<your-LAN-IP>:8000/api/v1` (a physical phone can't reach `localhost`; the iOS simulator can).
+
+Local Stripe, Gemini and Firebase credentials are optional; features that need them (subscriptions, Agri-AI, push) just won't work locally, and tests mock them.
+
 ## Backend conventions
 
 - Controllers in `app/Http/Controllers/Api/V1`, shaped by `Http/Resources/*` (never return models directly), validated by `Http/Requests/*`, authorized by `Policies/*`. Every policy has a `before()` that lets `is_admin` through; **`AiConversationPolicy` deliberately has no admin bypass.**
@@ -47,6 +59,8 @@ Mobile (run from `mobile/`):
 ## Deploying (production)
 
 There is no CI. The backend is deployed by tarball; the server is at `SERVER_IP`, user `codecell` (get the password from the owner — **it is not in this repo; prefer setting up an SSH key**). App root on the server: `/home/codecell/htdocs/shobuj-app`. Use `php8.3` and `php8.3 /usr/local/bin/composer`.
+
+On Windows the earlier deploys used PuTTY's `plink`/`pscp`; on a Mac use plain `ssh`/`scp` (one-time: `ssh-keygen -t ed25519` then `ssh-copy-id codecell@SERVER_IP`, so no password is needed afterwards).
 
 1. Tar `backend/` excluding `vendor`, `.env`, `tests`, `docs`, `node_modules`, and everything under `storage/` and `bootstrap/cache` (production keeps its own `.env` and `vendor`).
 2. Copy it to `/home/codecell/tmp/`, extract over the app root with `--strip-components=1`.
