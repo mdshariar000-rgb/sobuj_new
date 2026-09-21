@@ -62,6 +62,7 @@ There is no CI. The backend is deployed by tarball; the server is at `SERVER_IP`
 
 On Windows the earlier deploys used PuTTY's `plink`/`pscp`; on a Mac use plain `ssh`/`scp` (one-time: `ssh-keygen -t ed25519` then `ssh-copy-id codecell@SERVER_IP`, so no password is needed afterwards).
 
+0. Easiest: run `./deploy.sh` from the repo root (does steps 1–6 below with prompts; `--dry-run` checks SSH and builds the tarball only). Manual steps for reference:
 1. Tar `backend/` excluding `vendor`, `.env`, `tests`, `docs`, `node_modules`, and everything under `storage/` and `bootstrap/cache` (production keeps its own `.env` and `vendor`).
 2. Copy it to `/home/codecell/tmp/`, extract over the app root with `--strip-components=1`.
 3. `composer install --no-dev --optimize-autoloader --no-interaction`.
