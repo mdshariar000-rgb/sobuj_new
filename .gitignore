@@ -14,3 +14,6 @@
 
 # Gradle build output
 mobile/android/build/
+
+# Local AI-assistant notes, not part of the published code
+CLAUDE.md
