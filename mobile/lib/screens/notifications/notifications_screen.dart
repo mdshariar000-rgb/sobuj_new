@@ -9,6 +9,7 @@ import '../../theme/app_colors.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/seller_profile_screen.dart';
 import 'notification_deep_link.dart';
+import '../../widgets/shimmer.dart';
 
 /// The real notification inbox — reached from the bell icon on the Home/
 /// Events/Groups tabs. Post liked/commented/replied-to, and swap-offer/
@@ -70,6 +71,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         title: const Text('Notifications'),
         backgroundColor: AppColors.forestDark,
         foregroundColor: Colors.white,
+        // The theme's title style carries its own dark color, which beats
+        // foregroundColor — set white explicitly for this dark bar.
+        titleTextStyle: Theme.of(
+          context,
+        ).appBarTheme.titleTextStyle?.copyWith(color: Colors.white),
         actions: [
           TextButton(
             onPressed: () =>
@@ -80,7 +86,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         ],
       ),
       body: notificationsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const ShimmerCardList(thumbSize: 44, roundThumb: true),
         error: (error, _) => Center(child: Text('$error')),
         data: (state) {
           final notifications = state.notifications;
@@ -114,7 +120,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           }
 
           return RefreshIndicator(
-            onRefresh: () => ref.read(notificationsListProvider.notifier).refresh(),
+            onRefresh: () =>
+                ref.read(notificationsListProvider.notifier).refresh(),
             child: ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(vertical: 4),
@@ -149,12 +156,14 @@ class _NotificationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final actorName = notification.actor?.name ?? 'Agro Hub';
+    final actorName = notification.actor?.name ?? 'Shobuj';
 
-    return Container(
+    // A Material (not a colored Container) so the unread tint doesn't hide
+    // the ListTile's tap ripple.
+    return Material(
       color: notification.isUnread
           ? AppColors.primary.withValues(alpha: 0.05)
-          : null,
+          : Colors.transparent,
       child: ListTile(
         onTap: onTap,
         leading: InkWell(

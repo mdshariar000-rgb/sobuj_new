@@ -6,8 +6,10 @@ use App\Enums\ExperienceLevel;
 use App\Enums\GrowingSetup;
 use App\Filament\Resources\UserResource\Pages;
 use App\Models\User;
+use App\Support\UkAddress;
 use Carbon\Carbon;
 use Filament\Forms\Components\DateTimePicker;
+use Filament\Forms\Components\Section;
 use Filament\Forms\Components\Select;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Components\TextInput;
@@ -60,6 +62,21 @@ class UserResource extends Resource
                 ->maxLength(255)
                 ->unique(ignoreRecord: true),
 
+            Section::make('Address')
+                ->description('Private — only the user and admins can see this.')
+                ->columns(2)
+                ->schema([
+                    TextInput::make('address_line1')->label('Address line 1')->maxLength(255),
+                    TextInput::make('address_line2')->label('Address line 2')->maxLength(255),
+                    TextInput::make('address_city')->label('Town / city')->maxLength(100),
+                    TextInput::make('address_county')->label('County')->maxLength(100),
+                    TextInput::make('address_postcode')
+                        ->label('Postcode')
+                        ->maxLength(10)
+                        ->dehydrateStateUsing(fn (?string $state) => UkAddress::normalisePostcode($state))
+                        ->regex(UkAddress::POSTCODE_PATTERN),
+                ]),
+
             Select::make('experience_level')
                 ->options(self::enumOptions(ExperienceLevel::cases()))
                 ->native(false),
@@ -102,6 +119,11 @@ class UserResource extends Resource
                 TextColumn::make('email')
                     ->searchable()
                     ->copyable(),
+
+                TextColumn::make('address_postcode')
+                    ->label('Postcode')
+                    ->searchable()
+                    ->toggleable(),
 
                 TextColumn::make('experience_level')
                     ->badge()
@@ -156,24 +178,6 @@ class UserResource extends Resource
                     ->label('Admin')
                     ->boolean()
                     ->toggleable(isToggledHiddenByDefault: true),
-
-                TextColumn::make('agri_ai_subscription')
-                    ->label('Agri-AI')
-                    ->badge()
-                    // Read-only — driven entirely by Cashier's own `subscriptions` table
-                    // (kept in sync by Stripe webhooks), never edited directly here.
-                    ->getStateUsing(fn (User $record) => $record->subscription('default')?->stripe_status)
-                    ->formatStateUsing(fn (?string $state) => match ($state) {
-                        'trialing' => 'Trial',
-                        'active' => 'Active',
-                        null => 'None',
-                        default => ucfirst($state),
-                    })
-                    ->color(fn (User $record) => match (true) {
-                        $record->hasAgriAiAccess() => 'success',
-                        $record->subscription('default') !== null => 'warning',
-                        default => 'gray',
-                    }),
 
                 TextColumn::make('created_at')
                     ->label('Joined')

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists/PropertyList-1.0.dtd">
+<!--
+  Debug builds only (simulator). Sign in with Apple also needs to go in the
+  Release entitlements once the client turns it on for the App ID
+  com.greenshelter.shobuj and regenerates the "Shobuj App Store" profile —
+  adding it to Release before then breaks App Store signing.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.applesignin</key>
+	<array>
+		<string>Default</string>
+	</array>
+</dict>
+</plist>

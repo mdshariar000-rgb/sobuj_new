@@ -414,9 +414,7 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                             ),
                           ),
                           IconButton(
-                            key: const Key(
-                              'edit-profile-add-interest-button',
-                            ),
+                            key: const Key('edit-profile-add-interest-button'),
                             icon: const Icon(Icons.add_circle_outline),
                             color: AppColors.primary,
                             onPressed: _addInterest,
@@ -428,17 +426,22 @@ class _EditProfileScreenState extends ConsumerState<EditProfileScreen> {
                   const SizedBox(height: 16),
                   _FormSectionCard(
                     children: [
-                      SwitchListTile(
-                        key: const Key('edit-profile-handover-switch'),
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Community Handover Radius'),
-                        subtitle: const Text(
-                          'Show your approximate location to other growers '
-                          'on your listings and profile.',
+                      // Its own Material, so the card's white background
+                      // doesn't hide the tile's tap ripple.
+                      Material(
+                        type: MaterialType.transparency,
+                        child: SwitchListTile(
+                          key: const Key('edit-profile-handover-switch'),
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text('Community Handover Radius'),
+                          subtitle: const Text(
+                            'Show your approximate location to other growers '
+                            'on your listings and profile.',
+                          ),
+                          value: _showHandoverRadius,
+                          onChanged: (value) =>
+                              setState(() => _showHandoverRadius = value),
                         ),
-                        value: _showHandoverRadius,
-                        onChanged: (value) =>
-                            setState(() => _showHandoverRadius = value),
                       ),
                     ],
                   ),

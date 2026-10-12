@@ -12,9 +12,6 @@ class GroupCategory {
   final String name;
 
   factory GroupCategory.fromJson(Map<String, dynamic> json) {
-    return GroupCategory(
-      id: json['id'] as int,
-      name: json['name'] as String,
-    );
+    return GroupCategory(id: json['id'] as int, name: json['name'] as String);
   }
 }

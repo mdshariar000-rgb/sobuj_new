@@ -50,5 +50,9 @@ abstract final class AppColors {
   static const mintButton = Color(0xFF8AF5B3);
   static const mintButtonText = Color(0xFF007242);
 
+  /// Pale mint fill — marketplace action tiles, category chips and the
+  /// round chat buttons on listing cards.
+  static const mintLight = Color(0xFFD3F8E2);
+
   static const error = Color(0xFFBA1A1A);
 }

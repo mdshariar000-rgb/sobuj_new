@@ -3,26 +3,22 @@
 @section('title', 'Privacy Policy')
 
 @section('content')
-    <p>Agro Hub is a community app for growers to swap and sell plants, join local groups, attend events, and get plant-care guidance. This policy explains what we collect, why, who we share it with, and how you can delete it.</p>
+    <p>Agro Hub is a community app for growers to swap and sell plants, join local groups, and attend events. This policy explains what we collect, why, who we share it with, and how you can delete it.</p>
 
     <h2>What we collect</h2>
     <ul>
         <li><strong>Account details:</strong> your name, email address, and password (stored only as a one-way hash), plus optional profile details such as username, bio, phone number, growing interests, and profile and cover photos.</li>
         <li><strong>Location:</strong> the location you give us when you register or post. We store it on our servers, but other users only ever see a randomized approximation (offset by roughly 500&ndash;1000 metres) &mdash; never your exact coordinates. You can hide even that from other users in your profile settings.</li>
         <li><strong>Content you create:</strong> listings, photos, posts, comments, events, group messages, and swap-offer messages. Photos are re-encoded on upload and their embedded metadata (including GPS tags) is removed.</li>
-        <li><strong>Agri-AI Assistant conversations:</strong> the messages and photos you send to the assistant.</li>
         <li><strong>Device information:</strong> a push-notification token for your device, its platform, and the app version, so we can deliver notifications you've asked for.</li>
-        <li><strong>Subscription details:</strong> if you subscribe to Agri-AI Premium, our payment provider handles your payment details. We store only the subscription status and plan, never your card number.</li>
     </ul>
 
     <h2>How we use it</h2>
-    <p>To run the app: showing nearby listings, enabling swaps and chat, delivering notifications, powering the Agri-AI Assistant, keeping the community safe, and processing subscriptions. We do not sell your personal information and do not use it for advertising or cross-app tracking.</p>
+    <p>To run the app: showing nearby listings, enabling swaps and chat, delivering notifications, and keeping the community safe. We do not sell your personal information and do not use it for advertising or cross-app tracking.</p>
 
     <h2>Who we share it with</h2>
     <ul>
-        <li><strong>Google (Gemini API):</strong> messages and photos you send to the Agri-AI Assistant are sent to Google's Gemini API to generate a reply. We ask for your permission in the app before this happens the first time. No other content is sent to Gemini.</li>
         <li><strong>Google (Firebase Cloud Messaging):</strong> your device's push token and the notification text, to deliver push notifications.</li>
-        <li><strong>Stripe:</strong> processes Agri-AI Premium payments.</li>
         <li><strong>Other users:</strong> whatever you choose to post or list, together with your name and public profile.</li>
     </ul>
 
@@ -33,7 +29,7 @@
     <p>All traffic between the app and our servers is encrypted (HTTPS). Your sign-in session is kept in your device's secure storage.</p>
 
     <h2>Your choices and deleting your data</h2>
-    <p>You can edit your profile at any time. You can delete your account inside the app under <strong>Profile &rarr; Delete account</strong>. Deleting your account permanently removes your profile, listings, posts, comments, events, messages, AI conversations, uploaded photos, and device tokens, and cancels any active subscription. Groups you created that still have other members are handed to another member rather than deleted.</p>
+    <p>You can edit your profile at any time. You can delete your account inside the app under <strong>Profile &rarr; Delete account</strong>. Deleting your account permanently removes your profile, listings, posts, comments, events, messages, uploaded photos, and device tokens. Groups you created that still have other members are handed to another member rather than deleted.</p>
 
     <h2>Children</h2>
     <p>Agro Hub is not intended for children under 13, and we do not knowingly collect their information.</p>

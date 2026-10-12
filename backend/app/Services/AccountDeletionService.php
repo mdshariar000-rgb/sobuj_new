@@ -3,7 +3,6 @@
 namespace App\Services;
 
 use App\Enums\GroupMemberRole;
-use App\Models\AiMessage;
 use App\Models\Event;
 use App\Models\Group;
 use App\Models\GroupMessage;
@@ -16,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * Permanently deletes an account and the personal data attached to it (App Store
  * Guideline 5.1.1(v)). Most rows go via the users table's ON DELETE CASCADE foreign
- * keys; this service handles what those can't: cancelling a live Stripe subscription,
+ * keys; this service handles what those can't:
  * handing shared groups to another member instead of destroying them for everyone,
  * removing chat messages (which would otherwise survive with a null sender), and
  * deleting the uploaded files from disk.
@@ -25,18 +24,8 @@ class AccountDeletionService
 {
     public function __construct(private readonly ImageService $imageService) {}
 
-    /**
-     * @throws \Throwable if the Stripe subscription can't be cancelled — the account
-     *                    is left untouched so the user isn't deleted while still billed.
-     */
     public function delete(User $user): void
     {
-        // Outside the DB transaction: an external call that must succeed first.
-        $subscription = $user->subscription('default');
-        if ($subscription !== null && ! $subscription->ended()) {
-            $subscription->cancelNow();
-        }
-
         $filePaths = $this->collectFilePaths($user);
 
         DB::transaction(function () use ($user) {
@@ -44,11 +33,6 @@ class AccountDeletionService
 
             Message::query()->where('sender_id', $user->id)->delete();
             GroupMessage::query()->where('sender_id', $user->id)->delete();
-
-            // Cashier's tables have no foreign key to users, so nothing cascades.
-            $subscriptionIds = DB::table('subscriptions')->where('user_id', $user->id)->pluck('id');
-            DB::table('subscription_items')->whereIn('subscription_id', $subscriptionIds)->delete();
-            DB::table('subscriptions')->whereIn('id', $subscriptionIds)->delete();
 
             $user->tokens()->delete();
             $user->delete();
@@ -99,12 +83,12 @@ class AccountDeletionService
                 ->whereIn('listing_id', $user->listings()->select('id'))
                 ->pluck('path'))
             ->merge(Event::query()->where('host_id', $user->id)->whereNotNull('cover_image_path')->pluck('cover_image_path'))
-            ->merge(Message::query()->where('sender_id', $user->id)->whereNotNull('image_path')->pluck('image_path'))
-            ->merge(GroupMessage::query()->where('sender_id', $user->id)->whereNotNull('image_path')->pluck('image_path'))
-            ->merge(AiMessage::query()
-                ->whereIn('conversation_id', $user->aiConversations()->select('id'))
-                ->whereNotNull('image_path')
-                ->pluck('image_path'));
+            // imagePaths() covers every photo of a multi-photo message, plus the
+            // single image_path of messages sent before image_paths existed.
+            ->merge(Message::query()->where('sender_id', $user->id)->whereNotNull('image_path')->get()
+                ->flatMap(fn (Message $message) => $message->imagePaths()))
+            ->merge(GroupMessage::query()->where('sender_id', $user->id)->whereNotNull('image_path')->get()
+                ->flatMap(fn (GroupMessage $message) => $message->imagePaths()));
 
         return $paths->filter()->unique()->values()->all();
     }

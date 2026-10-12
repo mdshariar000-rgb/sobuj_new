@@ -5,6 +5,8 @@ import 'package:dio/dio.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/app_config.dart';
+import '../models/message_reaction.dart';
+import '../models/message_reply.dart';
 import '../models/swap_message.dart';
 import '../models/swap_offer.dart';
 
@@ -25,6 +27,10 @@ class SwapOfferRealtimeChannel {
   final int swapOfferId;
 
   void Function(SwapMessage message)? onMessage;
+
+  /// Someone else changed a message's reactions — carries that message's
+  /// full new reaction list.
+  void Function(int messageId, List<MessageReaction> reactions)? onReactions;
   void Function(SwapOfferStatus status)? onStatusUpdated;
   void Function(Object error)? onError;
 
@@ -116,6 +122,14 @@ class SwapOfferRealtimeChannel {
         onError?.call(data?['message'] ?? 'Realtime connection error');
       case 'message.sent':
         if (data != null) onMessage?.call(SwapMessage.fromJson(data));
+      case 'message.reacted':
+        final messageId = parseOptionalId(data?['message_id']);
+        if (messageId != null) {
+          onReactions?.call(
+            messageId,
+            MessageReaction.listFromJson(data?['reactions']),
+          );
+        }
       case 'swap.status-updated':
         final statusValue = data?['status'] as String?;
         if (statusValue != null) {

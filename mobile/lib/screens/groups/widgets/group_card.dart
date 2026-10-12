@@ -5,33 +5,41 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../../models/group.dart';
 import '../../../theme/app_colors.dart';
-
-/// A small decorative icon keyed to a handful of category strings that show
-/// up in the demo data — purely cosmetic pairing for a real, existing
-/// category value (never invents a category that isn't there). Anything
-/// that doesn't match falls back to a generic groups icon.
-IconData _categoryIcon(String? category) {
-  final normalized = category?.toLowerCase() ?? '';
-  if (normalized.contains('hydro')) return Icons.science_outlined;
-  if (normalized.contains('soil') || normalized.contains('compost')) {
-    return Icons.eco_outlined;
-  }
-  if (normalized.contains('orchid') || normalized.contains('flor')) {
-    return Icons.local_florist_outlined;
-  }
-  if (normalized.contains('home') || normalized.contains('permacul')) {
-    return Icons.cottage_outlined;
-  }
-  if (normalized.contains('fruit') || normalized.contains('orchard')) {
-    return Icons.park_outlined;
-  }
-  return Icons.groups_outlined;
-}
+import '../../../widgets/image_decode.dart';
 
 /// Abbreviates a real member count for display (e.g. 4823 -> "4.8K") — a
 /// display transform of real data, not a fabricated number.
 String _compactCount(int count) => NumberFormat.compact().format(count);
 
+/// "just now", "5m ago", "3h ago", "2d ago", "3w ago" — short enough to
+/// sit beside the member count.
+String _shortAgo(DateTime time) {
+  final diff = DateTime.now().difference(time);
+  if (diff.inMinutes < 1) return 'just now';
+  if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+  if (diff.inDays < 1) return '${diff.inHours}h ago';
+  if (diff.inDays < 7) return '${diff.inDays}d ago';
+  if (diff.inDays < 60) return '${diff.inDays ~/ 7}w ago';
+  return DateFormat.yMMMd().format(time);
+}
+
+String _members(int count) =>
+    '${_compactCount(count)} ${count == 1 ? 'member' : 'members'}';
+
+/// A fixed set of soft tints for groups without a photo, picked from the
+/// group's id so each keeps its colour.
+const _placeholderTints = [
+  Color(0xFFD6F8E3),
+  Color(0xFFFDE3CF),
+  Color(0xFFD6EAF8),
+  Color(0xFFE3D6F8),
+  Color(0xFFFFF3C4),
+  Color(0xFFF8D6E0),
+];
+
+/// One group in the Groups list: picture, name, members and when it was
+/// last active, the latest chat line for groups you're in, and Join /
+/// Joined / Requested plus the chat button.
 class GroupCard extends StatelessWidget {
   const GroupCard({
     super.key,
@@ -39,50 +47,73 @@ class GroupCard extends StatelessWidget {
     this.onTap,
     this.onJoin,
     this.onLeave,
+    this.onOpenChat,
     this.isBusy = false,
   });
 
   final Group group;
   final VoidCallback? onTap;
   final VoidCallback? onJoin;
+
+  /// Called from the "Joined" pill — the screen confirms before leaving.
   final VoidCallback? onLeave;
+
+  final VoidCallback? onOpenChat;
   final bool isBusy;
+
+  String get _meta {
+    final parts = [_members(group.membersCount ?? 0)];
+    final lastActive = group.lastActivityAt;
+    if (lastActive != null) parts.add('Active ${_shortAgo(lastActive)}');
+    return parts.join(' • ');
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isMember = group.isMember ?? false;
+    final isRequested = !isMember && (group.joinRequestPending ?? false);
+    final imageUrl = group.avatarUrl ?? group.coverImageUrl;
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         side: const BorderSide(color: AppColors.border),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: (group.avatarUrl ?? group.coverImageUrl) != null
+                borderRadius: BorderRadius.circular(12),
+                child: imageUrl != null
                     ? CachedNetworkImage(
-                        imageUrl: (group.avatarUrl ?? group.coverImageUrl)!,
-                        width: 80,
-                        height: 80,
+                        imageUrl: imageUrl,
+                        width: 56,
+                        height: 56,
+                        memCacheWidth: decodeWidthFor(context, 56),
                         fit: BoxFit.cover,
                       )
                     : Container(
-                        width: 80,
-                        height: 80,
-                        color: AppColors.surfaceMuted,
-                        child: Icon(
-                          _categoryIcon(group.category),
-                          color: AppColors.primary,
+                        width: 56,
+                        height: 56,
+                        color:
+                            _placeholderTints[group.id %
+                                _placeholderTints.length],
+                        alignment: Alignment.center,
+                        child: Text(
+                          group.name.trim().isEmpty
+                              ? '?'
+                              : group.name.trim()[0].toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.forestDark,
+                          ),
                         ),
                       ),
               ),
@@ -91,41 +122,16 @@ class GroupCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    if (group.category != null) ...[
-                      Row(
-                        children: [
-                          Icon(
-                            _categoryIcon(group.category),
-                            size: 12,
-                            color: AppColors.primary,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              group.category!.toUpperCase(),
-                              style: const TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.primary,
-                                letterSpacing: 0.4,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                    ],
                     Row(
                       children: [
-                        Expanded(
+                        Flexible(
                           child: Text(
                             group.name,
-                            style: theme.textTheme.titleMedium?.copyWith(
+                            style: theme.textTheme.titleSmall?.copyWith(
                               fontWeight: FontWeight.w700,
+                              fontSize: 15,
                             ),
-                            maxLines: 2,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -137,93 +143,189 @@ class GroupCard extends StatelessWidget {
                             color: AppColors.primary,
                           ),
                         ],
-                        if ((group.unreadCount ?? 0) > 0) ...[
-                          const SizedBox(width: 6),
-                          _UnreadBadge(count: group.unreadCount!),
+                        if (group.isPrivate) ...[
+                          const SizedBox(width: 4),
+                          const Icon(
+                            Icons.lock_outline,
+                            size: 14,
+                            color: AppColors.textMuted,
+                          ),
                         ],
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
-                      group.postsTodayCount != null
-                          ? '${_compactCount(group.membersCount ?? 0)} members • ${group.postsTodayCount} posts today'
-                          : '${_compactCount(group.membersCount ?? 0)} members',
+                      _meta,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: AppColors.textMuted,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    // A conversation-list-style preview of the group chat's
-                    // real most-recent message — only shown for a group this
-                    // user has joined and that actually has chat history.
                     if (isMember && group.lastMessage != null) ...[
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 4),
                       _ChatPreview(message: group.lastMessage!),
                     ],
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        if (onJoin != null || onLeave != null)
-                          SizedBox(
-                            height: 34,
-                            child: isMember
-                                ? FilledButton.tonalIcon(
-                                    onPressed: isBusy ? null : onLeave,
-                                    style: FilledButton.styleFrom(
-                                      backgroundColor: AppColors.mint,
-                                      foregroundColor: AppColors.primary,
-                                      minimumSize: Size.zero,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 14,
-                                      ),
-                                    ),
-                                    icon: isBusy
-                                        ? const SizedBox(
-                                            width: 14,
-                                            height: 14,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                            ),
-                                          )
-                                        : const Icon(Icons.check, size: 16),
-                                    label: const Text('Joined'),
-                                  )
-                                : FilledButton(
-                                    onPressed: isBusy ? null : onJoin,
-                                    style: FilledButton.styleFrom(
-                                      minimumSize: Size.zero,
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                      ),
-                                    ),
-                                    child: isBusy
-                                        ? const SizedBox(
-                                            width: 16,
-                                            height: 16,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : const Text('Join'),
-                                  ),
-                          ),
-                        const Spacer(),
-                        const Icon(
-                          Icons.chevron_right,
-                          size: 20,
-                          color: AppColors.textMuted,
-                        ),
-                      ],
-                    ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
+              if (isMember) ...[
+                if (onOpenChat != null)
+                  _ChatButton(
+                    key: Key('group-chat-button-${group.id}'),
+                    unreadCount: group.unreadCount ?? 0,
+                    onPressed: onOpenChat!,
+                  ),
+                // Already under "My groups", so no "Joined" pill taking up
+                // room — leaving sits in this small menu instead.
+                if (onLeave != null)
+                  isBusy
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : PopupMenuButton<void>(
+                          key: Key('group-menu-${group.id}'),
+                          tooltip: 'More',
+                          icon: const Icon(
+                            Icons.more_vert,
+                            color: AppColors.textMuted,
+                          ),
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              key: Key('group-leave-${group.id}'),
+                              onTap: onLeave,
+                              child: const Text('Leave group'),
+                            ),
+                          ],
+                        ),
+              ] else if (isRequested)
+                const _MembershipPill(
+                  label: 'Requested',
+                  icon: Icons.schedule,
+                  onPressed: null,
+                  outlined: true,
+                )
+              else if (onJoin != null)
+                _MembershipPill(
+                  key: Key('group-join-${group.id}'),
+                  label: 'Join',
+                  busy: isBusy,
+                  onPressed: onJoin,
+                ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _MembershipPill extends StatelessWidget {
+  const _MembershipPill({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.icon,
+    this.busy = false,
+    this.outlined = false,
+  });
+
+  final String label;
+  final IconData? icon;
+  final VoidCallback? onPressed;
+  final bool busy;
+  final bool outlined;
+
+  @override
+  Widget build(BuildContext context) {
+    final child = busy
+        ? const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 14),
+                const SizedBox(width: 4),
+              ],
+              Text(label),
+            ],
+          );
+    const padding = EdgeInsets.symmetric(horizontal: 12);
+    const size = Size(0, 34);
+    return outlined
+        ? OutlinedButton(
+            onPressed: busy ? null : onPressed,
+            style: OutlinedButton.styleFrom(
+              minimumSize: size,
+              padding: padding,
+              foregroundColor: AppColors.primary,
+              side: const BorderSide(color: AppColors.border),
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            child: child,
+          )
+        : FilledButton(
+            onPressed: busy ? null : onPressed,
+            style: FilledButton.styleFrom(
+              minimumSize: size,
+              padding: padding,
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            child: child,
+          );
+  }
+}
+
+class _ChatButton extends StatelessWidget {
+  const _ChatButton({
+    super.key,
+    required this.unreadCount,
+    required this.onPressed,
+  });
+
+  final int unreadCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton.filledTonal(
+          onPressed: onPressed,
+          tooltip: 'Group chat',
+          style: IconButton.styleFrom(
+            backgroundColor: AppColors.mint,
+            foregroundColor: AppColors.primary,
+            minimumSize: const Size(36, 36),
+            fixedSize: const Size(36, 36),
+            padding: EdgeInsets.zero,
+          ),
+          icon: const Icon(Icons.chat_bubble_outline, size: 18),
+        ),
+        if (unreadCount > 0)
+          Positioned(
+            right: -4,
+            top: -4,
+            child: IgnorePointer(child: _UnreadBadge(count: unreadCount)),
+          ),
+      ],
     );
   }
 }

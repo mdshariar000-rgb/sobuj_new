@@ -16,6 +16,8 @@ class Listing {
     required this.listingType,
     required this.transactionType,
     this.price,
+    this.quantity,
+    this.contact,
     required this.status,
     this.lookingFor,
     this.handoverNote,
@@ -25,6 +27,9 @@ class Listing {
     this.isSaved,
     this.owner,
     this.viewsCount = 0,
+    this.averageRating,
+    this.reviewsCount,
+    this.canReview,
     required this.createdAt,
   });
 
@@ -36,6 +41,15 @@ class Listing {
   final String listingType;
   final TransactionType transactionType;
   final double? price;
+
+  /// How many units are on offer ("Quantity available") — null on listings
+  /// posted before the field existed, and on swap/wanted listings.
+  final int? quantity;
+
+  /// The seller's phone number or email, as typed on the Sell form. Private:
+  /// the API only returns it to the seller themselves (buyers ask in chat),
+  /// so it's null for everyone else and on older listings.
+  final String? contact;
   final ListingStatus status;
   final String? lookingFor;
   final String? handoverNote;
@@ -57,11 +71,20 @@ class Listing {
   /// Real count of non-owner views (ListingController::show() increments
   /// it) — 0 rather than null when absent, since the field always exists.
   final int viewsCount;
+
+  /// Only present on a single-listing fetch (ListingController::show()
+  /// loads the aggregate) — null on list endpoints that don't compute it.
+  final double? averageRating;
+  final int? reviewsCount;
+
+  /// Only on a single-listing fetch: whether the signed-in user completed a
+  /// deal for this listing and so may review it.
+  final bool? canReview;
   final DateTime createdAt;
 
   String? get thumbnailUrl => photos.isEmpty ? null : photos.first.url;
 
-  Listing copyWith({bool? isSaved}) {
+  Listing copyWith({bool? isSaved, double? averageRating, int? reviewsCount}) {
     return Listing(
       id: id,
       title: title,
@@ -71,6 +94,8 @@ class Listing {
       listingType: listingType,
       transactionType: transactionType,
       price: price,
+      quantity: quantity,
+      contact: contact,
       status: status,
       lookingFor: lookingFor,
       handoverNote: handoverNote,
@@ -80,6 +105,9 @@ class Listing {
       isSaved: isSaved ?? this.isSaved,
       owner: owner,
       viewsCount: viewsCount,
+      averageRating: averageRating ?? this.averageRating,
+      reviewsCount: reviewsCount ?? this.reviewsCount,
+      canReview: canReview,
       createdAt: createdAt,
     );
   }
@@ -98,6 +126,8 @@ class Listing {
         json['transaction_type'] as String,
       ),
       price: (json['price'] as num?)?.toDouble(),
+      quantity: (json['quantity'] as num?)?.toInt(),
+      contact: json['contact'] as String?,
       status: ListingStatus.fromValue(json['status'] as String),
       lookingFor: json['looking_for'] as String?,
       handoverNote: json['handover_note'] as String?,
@@ -111,6 +141,9 @@ class Listing {
           ? AppUser.fromJson(json['owner'] as Map<String, dynamic>)
           : null,
       viewsCount: json['views_count'] as int? ?? 0,
+      averageRating: (json['average_rating'] as num?)?.toDouble(),
+      reviewsCount: json['reviews_count'] as int?,
+      canReview: json['can_review'] as bool?,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }

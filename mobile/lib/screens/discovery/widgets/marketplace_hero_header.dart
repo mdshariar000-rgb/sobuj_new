@@ -1,88 +1,88 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/app_colors.dart';
-import '../../../widgets/user_avatar.dart';
 
-/// The Marketplace tab's header — a compact dark brand bar matching every
-/// other tab's header convention: the real profile avatar top-left, brand
-/// name/tagline in the middle, and action icons top-right.
+/// The Marketplace header shared by every marketplace screen: an optional
+/// back arrow, the leaf logo, "Shobuj MARKETPLACE / Swap & Sell", and the
+/// Favorites and Messages icons on the right.
 class MarketplaceHeroHeader extends StatelessWidget {
   const MarketplaceHeroHeader({
     super.key,
-    required this.userName,
-    this.avatarUrl,
     required this.openOfferCount,
-    required this.onAvatarTap,
     required this.onMessagesTap,
     required this.onFavoritesTap,
+    this.onLogoTap,
+    this.onBack,
   });
 
-  final String userName;
-  final String? avatarUrl;
   final int openOfferCount;
-  final VoidCallback onAvatarTap;
   final VoidCallback onMessagesTap;
   final VoidCallback onFavoritesTap;
+
+  /// The marketplace tab opens the user's profile from the logo.
+  final VoidCallback? onLogoTap;
+
+  /// Shows a back arrow when set — the pushed marketplace screens
+  /// (Sell/Swap form) use it; the tab itself doesn't.
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [AppColors.forestDark, AppColors.forestPanel],
-        ),
-      ),
+      color: AppColors.forestDark,
       child: SafeArea(
         bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+          padding: EdgeInsets.fromLTRB(onBack == null ? 16 : 4, 10, 8, 12),
           child: Row(
             children: [
+              if (onBack != null)
+                IconButton(
+                  onPressed: onBack,
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  tooltip: 'Back',
+                ),
               InkWell(
                 key: const Key('profile-avatar-button'),
-                onTap: onAvatarTap,
+                onTap: onLogoTap,
                 customBorder: const CircleBorder(),
-                child: UserAvatar(
-                  name: userName,
-                  avatarUrl: avatarUrl,
-                  radius: 18,
-                  fallbackColor: AppColors.mint.withValues(alpha: 0.18),
+                child: Container(
+                  width: 46,
+                  height: 46,
+                  decoration: const BoxDecoration(
+                    color: AppColors.primary,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.eco, color: AppColors.mint, size: 26),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        Text(
-                          'Agro Hub',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                        const SizedBox(width: 5),
-                        Text(
-                          'MARKET',
-                          style: Theme.of(context).textTheme.labelMedium
-                              ?.copyWith(
-                                color: AppColors.mint,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.8,
-                              ),
-                        ),
-                      ],
+                    const Text(
+                      'Shobuj',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        height: 1.1,
+                      ),
+                    ),
+                    const Text(
+                      'MARKETPLACE',
+                      style: TextStyle(
+                        color: AppColors.mint,
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.6,
+                        height: 1.15,
+                      ),
                     ),
                     Text(
-                      'Swap, sell & source locally',
+                      'Swap & Sell',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: AppColors.textOnDarkMuted,
                       ),

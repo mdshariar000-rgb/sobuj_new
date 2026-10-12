@@ -7,6 +7,7 @@ import '../../models/event_enums.dart';
 import '../../providers/event_providers.dart';
 import '../../theme/app_colors.dart';
 import 'event_detail_screen.dart';
+import '../../widgets/shimmer.dart';
 
 const _weekdayLabels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
@@ -79,7 +80,7 @@ class _EventsCalendarScreenState extends ConsumerState<EventsCalendarScreen> {
           ),
           Expanded(
             child: eventsAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => const ShimmerCardList(count: 4, thumbSize: 48),
               error: (error, _) => Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
@@ -206,9 +207,7 @@ class _Header extends StatelessWidget {
                       onPressed: onToday,
                       style: TextButton.styleFrom(
                         foregroundColor: AppColors.mint,
-                        backgroundColor: AppColors.mint.withValues(
-                          alpha: 0.12,
-                        ),
+                        backgroundColor: AppColors.mint.withValues(alpha: 0.12),
                         shape: const StadiumBorder(),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 14,
@@ -516,7 +515,7 @@ class _DayEventsList extends StatelessWidget {
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      'No events on ${DateFormat('MMMM d').format(selectedDay)}',
+                      'No events on ${DateFormat('d MMMM').format(selectedDay)}',
                       style: Theme.of(context).textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w700,
                       ),
@@ -549,17 +548,14 @@ class _DayEventsList extends StatelessWidget {
           child: Row(
             children: [
               Text(
-                DateFormat('EEEE, MMMM d').format(selectedDay),
+                DateFormat('EEEE d MMMM').format(selectedDay),
                 style: Theme.of(
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 2,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: AppColors.mint.withValues(alpha: 0.35),
                   borderRadius: BorderRadius.circular(20),
@@ -580,7 +576,9 @@ class _DayEventsList extends StatelessWidget {
           _DayEventTile(
             event: event,
             onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)),
+              MaterialPageRoute(
+                builder: (_) => EventDetailScreen(event: event),
+              ),
             ),
           ),
       ],

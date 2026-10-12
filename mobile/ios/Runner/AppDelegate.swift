@@ -18,5 +18,20 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+
+    // The URL schemes in Info.plist — "Continue with Google" checks its
+    // scheme is registered before showing (Google's SDK crashes without it).
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShobujAppInfo") {
+      let channel = FlutterMethodChannel(
+        name: "shobuj/app_info", binaryMessenger: registrar.messenger())
+      channel.setMethodCallHandler { call, result in
+        guard call.method == "urlSchemes" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        let types = Bundle.main.object(forInfoDictionaryKey: "CFBundleURLTypes") as? [[String: Any]] ?? []
+        result(types.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] })
+      }
+    }
   }
 }

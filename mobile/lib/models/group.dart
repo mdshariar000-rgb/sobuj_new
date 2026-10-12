@@ -57,6 +57,9 @@ class Group {
     this.pinnedAt,
     this.unreadCount,
     this.lastMessage,
+    this.localMembersCount,
+    this.isLocal,
+    this.lastActivityAt,
     required this.createdAt,
   });
 
@@ -94,6 +97,15 @@ class Group {
   /// detail), same nullable-until-eager-loaded convention as membersCount.
   final int? postsTodayCount;
   final AppUser? creator;
+
+  /// Only from GET /groups/suggested: how many members are from the
+  /// viewer's city, and whether the group is for that city (named after it
+  /// or has members there) — see GroupController::suggested().
+  final int? localMembersCount;
+  final bool? isLocal;
+
+  /// Only from GET /groups: when anyone last posted or chatted there.
+  final DateTime? lastActivityAt;
 
   /// Only present when the request was authenticated — see
   /// GroupResource::is_member on the backend.
@@ -148,6 +160,7 @@ class Group {
     bool clearPinnedMessage = false,
     AppUser? pinnedBy,
     DateTime? pinnedAt,
+    int? unreadCount,
   }) {
     return Group(
       id: id,
@@ -173,8 +186,11 @@ class Group {
           : (pinnedMessage ?? this.pinnedMessage),
       pinnedBy: clearPinnedMessage ? null : (pinnedBy ?? this.pinnedBy),
       pinnedAt: clearPinnedMessage ? null : (pinnedAt ?? this.pinnedAt),
-      unreadCount: unreadCount,
+      unreadCount: unreadCount ?? this.unreadCount,
       lastMessage: lastMessage,
+      localMembersCount: localMembersCount,
+      isLocal: isLocal,
+      lastActivityAt: lastActivityAt,
       createdAt: createdAt,
     );
   }
@@ -197,6 +213,11 @@ class Group {
           ? AppUser.fromJson(json['creator'] as Map<String, dynamic>)
           : null,
       isMember: json['is_member'] as bool?,
+      localMembersCount: json['local_members_count'] as int?,
+      isLocal: json['is_local'] as bool?,
+      lastActivityAt: json['last_activity_at'] != null
+          ? DateTime.parse(json['last_activity_at'] as String)
+          : null,
       myRole: json['my_role'] as String?,
       joinRequestPending: json['join_request_pending'] as bool?,
       pendingJoinRequestsCount: json['pending_join_requests_count'] as int?,
@@ -209,7 +230,9 @@ class Group {
           : null,
       unreadCount: json['unread_count'] as int?,
       lastMessage: json['last_message'] != null
-          ? GroupLastMessage.fromJson(json['last_message'] as Map<String, dynamic>)
+          ? GroupLastMessage.fromJson(
+              json['last_message'] as Map<String, dynamic>,
+            )
           : null,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
@@ -235,4 +258,14 @@ class JoinGroupResult {
   }) {
     return this.requested ? requested() : joined(group!);
   }
+}
+
+/// GET /groups/suggested's answer: the groups, plus the city they were
+/// picked for (null when the account has no city).
+@immutable
+class SuggestedGroups {
+  const SuggestedGroups({this.city, required this.groups});
+
+  final String? city;
+  final List<Group> groups;
 }

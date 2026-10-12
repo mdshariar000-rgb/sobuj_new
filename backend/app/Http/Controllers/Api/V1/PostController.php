@@ -39,7 +39,7 @@ class PostController extends Controller
     private function withPostMeta($query, Request $request)
     {
         return $query
-            ->withCount(['comments', 'likedBy as likes_count'])
+            ->withCount(Post::RESOURCE_COUNTS)
             ->addSelect(['liked_by_me' => DB::table('post_likes')
                 ->selectRaw('1')
                 ->whereColumn('post_id', 'posts.id')
@@ -49,8 +49,7 @@ class PostController extends Controller
     }
 
     /**
-     * A single group's discussion-thread posts. The general Home Feed is served
-     * separately by HomeFeedController.
+     * A single group's discussion-thread posts.
      *
      * A pending/rejected post (only possible in a private group — see
      * store()) is invisible to everyone except its own author and that
@@ -81,17 +80,19 @@ class PostController extends Controller
             ->paginate(self::PER_PAGE)
             ->withQueryString();
 
+        // Every post here is in this group — saves a query per post.
+        $posts->getCollection()->each->setRelation('group', $group);
+
         return PostResource::collection($posts);
     }
 
     /**
-     * Posts to the general Home Feed when group_id is omitted, or into a
-     * group's discussion thread when it's set — group membership is required
-     * for the latter. A non-admin member's post into a *private* group
-     * starts approval_status pending rather than immediately visible to the
-     * rest of the group — see index()/PostPolicy::view(). Every other case
-     * (Home Feed, public group, or the group's own admin posting) is
-     * approved immediately, same as before this feature existed.
+     * Posts into a group's discussion thread — there's no personal timeline,
+     * so group_id is required and so is membership. A non-admin member's
+     * post into a *private* group starts approval_status pending rather than
+     * immediately visible to the rest of the group — see index()/
+     * PostPolicy::view(). A public group's posts, or the group's own admin
+     * posting, are approved immediately.
      */
     public function store(StorePostRequest $request, ImageService $imageService): JsonResponse
     {
@@ -99,26 +100,23 @@ class PostController extends Controller
         $user = $request->user();
         $approvalStatus = PostApprovalStatus::Approved;
 
-        if (! empty($data['group_id'])) {
-            $group = Group::query()->findOrFail($data['group_id']);
-            abort_if($group->status !== GroupStatus::Active, 403, 'This group is no longer available.');
-            $membership = $group->members()->where('user_id', $user->id)->first();
+        $group = Group::query()->findOrFail($data['group_id']);
+        abort_if($group->status !== GroupStatus::Active, 403, 'This group is no longer available.');
+        $membership = $group->members()->where('user_id', $user->id)->first();
 
-            if ($membership === null) {
-                throw ValidationException::withMessages([
-                    'group_id' => ['You must be a member of this group to post in it.'],
-                ]);
-            }
+        if ($membership === null) {
+            throw ValidationException::withMessages([
+                'group_id' => ['You must be a member of this group to post in it.'],
+            ]);
+        }
 
-            if ($group->isPrivate() && $membership->pivot->role !== GroupMemberRole::Admin) {
-                $approvalStatus = PostApprovalStatus::Pending;
-            }
+        if ($group->isPrivate() && $membership->pivot->role !== GroupMemberRole::Admin) {
+            $approvalStatus = PostApprovalStatus::Pending;
         }
 
         $post = new Post([
-            'group_id' => $data['group_id'] ?? null,
+            'group_id' => $data['group_id'],
             'body' => $data['body'],
-            'category' => $data['category'] ?? 'General',
         ]);
         $post->author_id = $user->id;
         $post->approval_status = $approvalStatus;
@@ -129,8 +127,8 @@ class PostController extends Controller
 
         $post->save();
 
-        $freshPost = $post->fresh(['author', 'group']);
-        $freshPost->loadCount(['comments', 'likedBy as likes_count']);
+        $freshPost = $post->fresh(Post::RESOURCE_RELATIONS);
+        $freshPost->loadCount(Post::RESOURCE_COUNTS);
         // A post the author just created can't already be liked.
         $freshPost->setAttribute('liked_by_me', false);
 
@@ -143,8 +141,8 @@ class PostController extends Controller
     {
         $this->authorize('view', $post);
 
-        $post->loadCount(['comments', 'likedBy as likes_count'])
-            ->loadMissing(['author', 'group', 'comments.author']);
+        $post->loadCount(Post::RESOURCE_COUNTS)
+            ->loadMissing([...Post::RESOURCE_RELATIONS, 'comments.author']);
         $post->setAttribute(
             'liked_by_me',
             $post->likedBy()->where('user_id', $request->user()->id)->exists(),
@@ -154,7 +152,7 @@ class PostController extends Controller
     }
 
     /**
-     * Only the author's own body/category/image — group_id, author, and
+     * Only the author's own body/image — group_id, author, and
      * moderation/approval state are never editable here. A new image
      * replaces (and deletes) the old one; remove_image=true clears it
      * without uploading a new one.
@@ -169,10 +167,6 @@ class PostController extends Controller
             $post->body = $data['body'];
         }
 
-        if (array_key_exists('category', $data)) {
-            $post->category = $data['category'] ?? 'General';
-        }
-
         if ($request->hasFile('image')) {
             if ($post->image_path !== null) {
                 $imageService->delete($post->image_path);
@@ -185,8 +179,8 @@ class PostController extends Controller
 
         $post->save();
 
-        $freshPost = $post->fresh(['author', 'group']);
-        $freshPost->loadCount(['comments', 'likedBy as likes_count']);
+        $freshPost = $post->fresh(Post::RESOURCE_RELATIONS);
+        $freshPost->loadCount(Post::RESOURCE_COUNTS);
         $freshPost->setAttribute(
             'liked_by_me',
             $freshPost->likedBy()->where('user_id', $request->user()->id)->exists(),
@@ -241,8 +235,8 @@ class PostController extends Controller
         $isNewLike = ! $post->likedBy()->where('user_id', $request->user()->id)->exists();
         $post->likedBy()->syncWithoutDetaching([$request->user()->id]);
 
-        $post->loadCount(['comments', 'likedBy as likes_count'])
-            ->loadMissing(['author', 'group']);
+        $post->loadCount(Post::RESOURCE_COUNTS)
+            ->loadMissing(Post::RESOURCE_RELATIONS);
         $post->setAttribute('liked_by_me', true);
 
         if ($isNewLike) {
@@ -263,8 +257,8 @@ class PostController extends Controller
     {
         $post->likedBy()->detach($request->user()->id);
 
-        $post->loadCount(['comments', 'likedBy as likes_count'])
-            ->loadMissing(['author', 'group']);
+        $post->loadCount(Post::RESOURCE_COUNTS)
+            ->loadMissing(Post::RESOURCE_RELATIONS);
         $post->setAttribute('liked_by_me', false);
 
         return new PostResource($post);

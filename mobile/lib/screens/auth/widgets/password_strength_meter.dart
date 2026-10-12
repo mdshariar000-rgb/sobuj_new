@@ -87,15 +87,17 @@ class PasswordStrengthMeter extends StatelessWidget {
                   color: AppColors.primary,
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  '${strength.label} Botanical Shield',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.primary,
+                Expanded(
+                  child: Text(
+                    '${strength.label} Botanical Shield',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.primary,
+                    ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 8),
                 Text(
                   '$percent% secured',
                   style: const TextStyle(

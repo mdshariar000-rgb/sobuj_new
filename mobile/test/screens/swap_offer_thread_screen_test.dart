@@ -28,7 +28,8 @@ class _DelayedSendApiClient extends FakeApiClient {
   Future<SwapMessage> sendSwapOfferMessage(
     int swapOfferId, {
     String? body,
-    File? image,
+    List<File> images = const [],
+    int? replyToId,
   }) {
     lastSentSwapOfferMessageBody = body;
     return _completer.future;
@@ -128,6 +129,30 @@ void main() {
     },
   );
 
+  testWidgets('the buyer is asked for a review once the deal is completed', (
+    tester,
+  ) async {
+    final base = _buildOffer(id: 1);
+    final completedAsBuyer = SwapOffer(
+      id: 1,
+      status: SwapOfferStatus.completed,
+      listing: base.listing,
+      requester: buildFakeUser(id: 1, name: 'Me'),
+      createdAt: base.createdAt,
+    );
+
+    await _pumpThread(tester, FakeApiClient(), completedAsBuyer);
+
+    expect(find.byKey(const Key('swap-review-prompt')), findsOneWidget);
+    expect(find.text('Leave a review'), findsOneWidget);
+  });
+
+  testWidgets('no review prompt while the deal is still open', (tester) async {
+    await _pumpThread(tester, FakeApiClient(), _buildOffer(id: 1));
+
+    expect(find.byKey(const Key('swap-review-prompt')), findsNothing);
+  });
+
   testWidgets('sending a message calls the API and appears in the thread', (
     tester,
   ) async {
@@ -144,10 +169,7 @@ void main() {
 
     await _pumpThread(tester, fakeClient, offer);
 
-    await tester.enterText(
-      find.byType(TextField),
-      'Is this still available?',
-    );
+    await tester.enterText(find.byType(TextField), 'Is this still available?');
     await tester.tap(find.byIcon(Icons.send));
     await tester.pumpAndSettle();
 
@@ -189,42 +211,39 @@ void main() {
     },
   );
 
-  testWidgets(
-    'does not show a message twice when the realtime echo beats the '
-    "send request's own HTTP response",
-    (tester) async {
-      final offer = _buildOffer(id: 1);
-      final fakeClient = _DelayedSendApiClient();
-      late FakeSwapOfferRealtimeChannel channel;
+  testWidgets('does not show a message twice when the realtime echo beats the '
+      "send request's own HTTP response", (tester) async {
+    final offer = _buildOffer(id: 1);
+    final fakeClient = _DelayedSendApiClient();
+    late FakeSwapOfferRealtimeChannel channel;
 
-      await _pumpThread(
-        tester,
-        fakeClient,
-        offer,
-        onChannelCreated: (c) => channel = c,
-      );
+    await _pumpThread(
+      tester,
+      fakeClient,
+      offer,
+      onChannelCreated: (c) => channel = c,
+    );
 
-      await tester.enterText(find.byType(TextField), 'On my way!');
-      await tester.tap(find.byIcon(Icons.send));
-      await tester.pump();
+    await tester.enterText(find.byType(TextField), 'On my way!');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
 
-      final confirmed = SwapMessage(
-        id: 5,
-        swapOfferId: 1,
-        isSystemEvent: false,
-        body: 'On my way!',
-        sender: buildFakeUser(id: 1, name: 'Me'),
-        createdAt: DateTime.now(),
-      );
+    final confirmed = SwapMessage(
+      id: 5,
+      swapOfferId: 1,
+      isSystemEvent: false,
+      body: 'On my way!',
+      sender: buildFakeUser(id: 1, name: 'Me'),
+      createdAt: DateTime.now(),
+    );
 
-      // The realtime broadcast of this exact message arrives before this
-      // request's own HTTP response does — a real race with Reverb.
-      channel.onMessage?.call(confirmed);
-      await tester.pump();
-      fakeClient.resolve(confirmed);
-      await tester.pumpAndSettle();
+    // The realtime broadcast of this exact message arrives before this
+    // request's own HTTP response does — a real race with Reverb.
+    channel.onMessage?.call(confirmed);
+    await tester.pump();
+    fakeClient.resolve(confirmed);
+    await tester.pumpAndSettle();
 
-      expect(find.text('On my way!'), findsOneWidget);
-    },
-  );
+    expect(find.text('On my way!'), findsOneWidget);
+  });
 }

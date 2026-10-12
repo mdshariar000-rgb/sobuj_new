@@ -14,6 +14,7 @@ import 'swap_offer_thread_screen.dart';
 import 'widgets/category_chips.dart' show categoryIcon;
 import 'widgets/create_listing_banner.dart';
 import 'widgets/listing_thumbnail.dart';
+import '../../widgets/shimmer.dart';
 
 enum _MessagesFilter { all, buying, selling, archived }
 
@@ -183,7 +184,7 @@ class _MessagesScreenState extends ConsumerState<MessagesScreen> {
           ),
           Expanded(
             child: offersAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => const ShimmerCardList(thumbSize: 64, lines: 3),
               error: (error, _) => Center(child: Text('$error')),
               data: (offers) {
                 final visible = _visibleOffers(offers, currentUserId);
@@ -230,9 +231,8 @@ class _MessagesScreenState extends ConsumerState<MessagesScreen> {
                           padding: const EdgeInsets.all(24),
                           child: Text(
                             offers.isEmpty
-                                ? 'No conversations yet — Contact, Request, '
-                                      'or Propose Trade on a listing to '
-                                      'start one.'
+                                ? 'No conversations yet — tap Message '
+                                      'Seller on a listing to start one.'
                                 : 'No conversations match your filters.',
                             textAlign: TextAlign.center,
                             style: const TextStyle(color: AppColors.textMuted),
@@ -398,21 +398,45 @@ class _FilterChip extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
+  // Drawn by hand rather than with ChoiceChip: the app theme's chip colours
+  // are for light screens and turned the unselected chips white-on-white on
+  // this dark header.
   @override
   Widget build(BuildContext context) {
-    return ChoiceChip(
-      label: Text(count != null ? '$label ($count)' : label),
-      selected: selected,
-      onSelected: (_) => onTap(),
-      selectedColor: AppColors.mint,
-      labelStyle: TextStyle(
-        color: selected ? AppColors.forestDark : Colors.white,
-        fontWeight: FontWeight.w600,
-        fontSize: 12,
+    final foreground = selected ? AppColors.forestDark : Colors.white;
+    return Material(
+      color: selected ? AppColors.mint : Colors.white.withValues(alpha: 0.10),
+      shape: StadiumBorder(
+        side: BorderSide(
+          color: selected
+              ? AppColors.mint
+              : Colors.white.withValues(alpha: 0.35),
+        ),
       ),
-      backgroundColor: Colors.white.withValues(alpha: 0.08),
-      shape: const StadiumBorder(),
-      side: BorderSide.none,
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (selected) ...[
+                Icon(Icons.check, size: 16, color: foreground),
+                const SizedBox(width: 4),
+              ],
+              Text(
+                count != null ? '$label ($count)' : label,
+                style: TextStyle(
+                  color: foreground,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -682,7 +706,7 @@ class _ListingPill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final priceText = listing.price != null
-        ? NumberFormat.simpleCurrency().format(listing.price)
+        ? NumberFormat.simpleCurrency(name: 'GBP').format(listing.price)
         : listing.transactionType.label;
 
     return Container(

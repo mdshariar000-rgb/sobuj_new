@@ -2,6 +2,8 @@
 
 namespace App\Http\Resources;
 
+use App\Enums\PostApprovalStatus;
+use App\Enums\PostModerationStatus;
 use App\Models\Post;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
@@ -21,11 +23,21 @@ class PostResource extends JsonResource
             'id' => $this->id,
             'group_id' => $this->group_id,
             'body' => $this->body,
-            'category' => $this->category,
             'approval_status' => $this->approval_status->value,
             'image_url' => $this->image_path !== null
                 ? Storage::disk('public')->url($this->image_path)
                 : null,
+            // Whether the app offers "Share" (to other apps): only approved,
+            // visible posts in an active public group — a private group's
+            // posts never leave the group.
+            'can_share' => $this->when(
+                $this->relationLoaded('group'),
+                fn () => $this->group !== null
+                    && $this->group->isActive()
+                    && ! $this->group->isPrivate()
+                    && $this->approval_status === PostApprovalStatus::Approved
+                    && $this->moderation_status === PostModerationStatus::Visible,
+            ),
             'comments_count' => $this->whenCounted('comments'),
             // withCount(['likedBy as likes_count']) aliases the count column
             // directly to `likes_count`, so whenCounted('likedBy') (which

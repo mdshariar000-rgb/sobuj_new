@@ -13,9 +13,6 @@ class ListingCategory {
   final String name;
 
   factory ListingCategory.fromJson(Map<String, dynamic> json) {
-    return ListingCategory(
-      id: json['id'] as int,
-      name: json['name'] as String,
-    );
+    return ListingCategory(id: json['id'] as int, name: json['name'] as String);
   }
 }

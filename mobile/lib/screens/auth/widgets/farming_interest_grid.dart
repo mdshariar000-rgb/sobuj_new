@@ -25,17 +25,25 @@ class FarmingInterestGrid extends StatelessWidget {
     GrowingSetup.rooftop: (Icons.roofing_outlined, 'Rooftop containers'),
     GrowingSetup.communityGarden: (Icons.groups_outlined, 'Shared plots'),
     GrowingSetup.greenhouse: (Icons.spa_outlined, 'Controlled climate'),
+    GrowingSetup.allotment: (Icons.grass_outlined, 'Rented plot'),
   };
 
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
+    return GridView(
+      // Explicit zero — otherwise a shrink-wrapped grid pads itself by the
+      // status-bar inset, leaving a blank gap above the cards.
+      padding: EdgeInsets.zero,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 10,
-      crossAxisSpacing: 10,
-      childAspectRatio: 2.4,
+      // Card height grows with the text size, so titles aren't clipped with
+      // Larger Text on (a fixed aspect ratio would cut them off).
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        mainAxisExtent: 24 + MediaQuery.textScalerOf(context).scale(46),
+      ),
       children: GrowingSetup.values.map((setup) {
         final isSelected = value == setup;
         final (icon, subtitle) = _icons[setup]!;

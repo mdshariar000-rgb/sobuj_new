@@ -8,15 +8,22 @@ import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/group.dart';
 import '../../models/group_message.dart';
+import '../../models/message_reaction.dart';
+import '../../models/message_reply.dart';
 import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/group_providers.dart';
 import '../../services/api_exception.dart';
 import '../../services/group_realtime_channel.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/chat_image_grid.dart';
+import '../../widgets/chat_reactions.dart';
+import '../../widgets/chat_reply.dart';
+import '../../widgets/pending_images_strip.dart';
 import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/seller_profile_screen.dart';
+import '../../widgets/shimmer.dart';
 
 bool _isSameDay(DateTime a, DateTime b) {
   return a.year == b.year && a.month == b.month && a.day == b.day;
@@ -41,6 +48,15 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
   final _scrollController = ScrollController();
   final _composerFocusNode = FocusNode();
   bool _isSending = false;
+
+  /// Photos picked for the next message, shown above the composer.
+  final List<File> _pendingImages = [];
+
+  /// The message the next one answers, shown above the composer.
+  MessageReply? _replyingTo;
+
+  /// Lets a tapped reply quote scroll back to the message it quotes.
+  final _messageKeys = <int, GlobalKey>{};
   int _lastMessageCount = 0;
   GroupRealtimeChannel? _realtime;
 
@@ -52,6 +68,11 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
         ref
             .read(groupMessagesProvider(widget.group.id).notifier)
             .receiveMessage(message);
+      }
+      ..onReactions = (messageId, reactions) {
+        ref
+            .read(groupMessagesProvider(widget.group.id).notifier)
+            .applyReactions(messageId, reactions);
       };
     _realtime = channel;
     channel.connect();
@@ -102,17 +123,34 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
 
   Future<void> _send() async {
     final body = _controller.text.trim();
-    if (body.isEmpty) return;
+    final images = List<File>.of(_pendingImages);
+    final replyTo = _replyingTo;
+    if (body.isEmpty && images.isEmpty) return;
 
     _controller.clear();
-    setState(() => _isSending = true);
+    setState(() {
+      _pendingImages.clear();
+      _replyingTo = null;
+      _isSending = true;
+    });
     try {
       await ref
           .read(groupMessagesProvider(widget.group.id).notifier)
-          .sendMessage(body: body);
+          .sendMessage(
+            body: body.isEmpty ? null : body,
+            images: images,
+            replyTo: replyTo,
+          );
     } on ApiException catch (e) {
       if (mounted) {
+        // Put back what didn't send, unless the user already started over.
         if (_controller.text.isEmpty) _controller.text = body;
+        if (_pendingImages.isEmpty) {
+          setState(() => _pendingImages.addAll(images));
+        }
+        if (_replyingTo == null && replyTo != null) {
+          setState(() => _replyingTo = replyTo);
+        }
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
@@ -122,28 +160,86 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
     }
   }
 
-  Future<void> _sendImage(ImageSource source) async {
-    final picked = await ImagePicker().pickImage(
-      source: source,
-      maxWidth: 1600,
-      imageQuality: 85,
-    );
-    if (picked == null) return;
-
-    setState(() => _isSending = true);
+  Future<void> _react(int messageId, String emoji) async {
     try {
       await ref
           .read(groupMessagesProvider(widget.group.id).notifier)
-          .sendMessage(image: File(picked.path));
+          .react(messageId, emoji);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
       }
-    } finally {
-      if (mounted) setState(() => _isSending = false);
     }
+  }
+
+  void _startReply(GroupMessage message) {
+    setState(
+      () => _replyingTo = MessageReply(
+        id: message.id,
+        body: message.body,
+        senderName: message.sender?.name,
+        imageUrl: message.imageUrls.firstOrNull,
+        imageCount: message.imageUrls.length + message.localImages.length,
+      ),
+    );
+    _composerFocusNode.requestFocus();
+  }
+
+  /// Scrolls to the quoted message — directly if it's built, otherwise to
+  /// roughly where it sits in the list first so the lazy list builds it.
+  void _scrollToMessage(int messageId, List<GroupMessage> messages) {
+    void reveal() {
+      final target = _messageKeys[messageId]?.currentContext;
+      if (target != null) {
+        Scrollable.ensureVisible(
+          target,
+          alignment: 0.3,
+          duration: const Duration(milliseconds: 300),
+        );
+      }
+    }
+
+    if (_messageKeys[messageId]?.currentContext != null) {
+      reveal();
+      return;
+    }
+    final index = messages.indexWhere((m) => m.id == messageId);
+    if (index < 0 || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    _scrollController.jumpTo(
+      position.maxScrollExtent * index / messages.length,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => reveal());
+  }
+
+  /// Adds photos to the next message rather than sending straight away, so
+  /// several can go together, with a caption.
+  Future<void> _addImages(ImageSource source) async {
+    final remaining = maxChatImages - _pendingImages.length;
+    if (remaining <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You can send up to $maxChatImages photos at a time.'),
+        ),
+      );
+      return;
+    }
+
+    final List<File> picked;
+    if (source == ImageSource.gallery) {
+      picked = await pickChatImagesFromGallery(remaining: remaining);
+    } else {
+      final photo = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 1600,
+        imageQuality: 85,
+      );
+      picked = photo == null ? const [] : [File(photo.path)];
+    }
+    if (picked.isEmpty || !mounted) return;
+    setState(() => _pendingImages.addAll(picked));
   }
 
   Future<void> _sendQuickReply(String text) async {
@@ -208,7 +304,7 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
             ),
           Expanded(
             child: messagesAsync.when(
-              loading: () => const Center(child: CircularProgressIndicator()),
+              loading: () => const ShimmerChat(),
               error: (error, _) => Center(child: Text('$error')),
               data: (messages) {
                 if (messages.isEmpty) {
@@ -225,7 +321,9 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
                     final message = messages[index];
-                    final previous = index - 1 >= 0 ? messages[index - 1] : null;
+                    final previous = index - 1 >= 0
+                        ? messages[index - 1]
+                        : null;
                     final showDateDivider =
                         previous == null ||
                         !_isSameDay(previous.createdAt, message.createdAt);
@@ -238,11 +336,27 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        if (showDateDivider) _DateDivider(date: message.createdAt),
-                        _MessageBubble(
-                          message: message,
-                          isMine: isMine,
-                          showSenderName: showSenderName,
+                        if (showDateDivider)
+                          _DateDivider(date: message.createdAt),
+                        KeyedSubtree(
+                          key: _messageKeys.putIfAbsent(
+                            message.id,
+                            GlobalKey.new,
+                          ),
+                          child: _MessageBubble(
+                            message: message,
+                            isMine: isMine,
+                            showSenderName: showSenderName,
+                            onReply: () => _startReply(message),
+                            myUserId: currentUserId,
+                            onReact: (emoji) => _react(message.id, emoji),
+                            onQuoteTap: message.replyToId == null
+                                ? null
+                                : () => _scrollToMessage(
+                                    message.replyToId!,
+                                    messages,
+                                  ),
+                          ),
                         ),
                       ],
                     );
@@ -313,6 +427,15 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
               ],
             ),
           ),
+          if (_replyingTo != null)
+            ReplyComposerBar(
+              reply: _replyingTo!,
+              onCancel: () => setState(() => _replyingTo = null),
+            ),
+          PendingImagesStrip(
+            files: _pendingImages,
+            onRemove: (index) => setState(() => _pendingImages.removeAt(index)),
+          ),
           SafeArea(
             top: false,
             child: Padding(
@@ -322,14 +445,14 @@ class _GroupChatScreenState extends ConsumerState<GroupChatScreen> {
                   IconButton(
                     onPressed: _isSending
                         ? null
-                        : () => _sendImage(ImageSource.gallery),
+                        : () => _addImages(ImageSource.gallery),
                     icon: const Icon(Icons.add_photo_alternate_outlined),
-                    tooltip: 'Attach a photo',
+                    tooltip: 'Attach photos',
                   ),
                   IconButton(
                     onPressed: _isSending
                         ? null
-                        : () => _sendImage(ImageSource.camera),
+                        : () => _addImages(ImageSource.camera),
                     icon: const Icon(Icons.camera_alt_outlined),
                     tooltip: 'Take a photo',
                   ),
@@ -432,7 +555,8 @@ class _ChatHeader extends StatelessWidget {
                     ),
                     if (group.membersCount != null)
                       Text(
-                        '${group.membersCount} members',
+                        '${group.membersCount} '
+                        '${group.membersCount == 1 ? 'member' : 'members'}',
                         style: const TextStyle(
                           color: AppColors.textOnDarkMuted,
                           fontSize: 12,
@@ -555,16 +679,24 @@ class _MessageBubble extends StatelessWidget {
     required this.message,
     required this.isMine,
     required this.showSenderName,
+    this.onReply,
+    this.onQuoteTap,
+    this.myUserId,
+    this.onReact,
   });
 
   final GroupMessage message;
   final bool isMine;
   final bool showSenderName;
+  final VoidCallback? onReply;
+  final VoidCallback? onQuoteTap;
+  final int? myUserId;
+  final ValueChanged<String>? onReact;
 
   @override
   Widget build(BuildContext context) {
     final sender = message.sender;
-    final hasImage = message.localImage != null || message.imageUrl != null;
+    final hasImage = message.hasImages;
 
     final bubble = Opacity(
       opacity: message.isPending ? 0.75 : 1,
@@ -596,63 +728,56 @@ class _MessageBubble extends StatelessWidget {
                 child: GestureDetector(
                   onTap: () => openUserProfile(context, sender?.id),
                   child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      sender?.name ?? 'Unknown grower',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        sender?.name ?? 'Unknown grower',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary,
+                        ),
                       ),
-                    ),
-                    if (message.senderIsAdmin ?? false) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE0E3E0),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text(
-                          'Admin',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.label,
+                      if (message.senderIsAdmin ?? false) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE0E3E0),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Text(
+                            'Admin',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.label,
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
-                  ],
                   ),
                 ),
               ),
-            if (message.localImage != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(
-                  message.localImage!,
-                  width: 160,
-                  height: 160,
-                  fit: BoxFit.cover,
+            if (message.replyToId != null)
+              Padding(
+                padding: hasImage
+                    ? const EdgeInsets.fromLTRB(4, 4, 4, 0)
+                    : EdgeInsets.zero,
+                child: ReplyQuote(
+                  reply: message.replyTo,
+                  onDarkBubble: isMine,
+                  onTap: onQuoteTap,
                 ),
-              )
-            else if (message.imageUrl != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  message.imageUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, _, _) => const SizedBox(
-                    width: 160,
-                    height: 160,
-                    child: Icon(Icons.broken_image_outlined),
-                  ),
-                ),
+              ),
+            if (hasImage)
+              ChatImageGrid(
+                urls: message.imageUrls,
+                files: message.localImages,
               ),
             if (message.body != null && message.body!.isNotEmpty)
               Padding(
@@ -698,34 +823,69 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
 
+    final canAct = !message.isPending;
+
     if (isMine) {
-      return Align(alignment: Alignment.centerRight, child: bubble);
+      return SwipeToReply(
+        onReply: canAct ? onReply : null,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              GestureDetector(
+                key: Key('message-bubble-${message.id}'),
+                onLongPress: canAct ? () => _showMessageActions(context) : null,
+                child: bubble,
+              ),
+              ReactionChips(
+                reactions: message.reactions,
+                myUserId: myUserId,
+                onTap: canAct ? onReact : null,
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        GestureDetector(
-          onTap: () => openUserProfile(context, sender?.id),
-          child: UserAvatar(
-            name: sender?.name ?? '?',
-            avatarUrl: sender?.avatarUrl,
-            radius: 12,
+    return SwipeToReply(
+      onReply: canAct ? onReply : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          GestureDetector(
+            onTap: () => openUserProfile(context, sender?.id),
+            child: UserAvatar(
+              name: sender?.name ?? '?',
+              avatarUrl: sender?.avatarUrl,
+              radius: 12,
+            ),
           ),
-        ),
-        const SizedBox(width: 6),
-        // Long-press a message from another member to report it or block them.
-        Flexible(
-          child: GestureDetector(
-            key: Key('message-bubble-${message.id}'),
-            onLongPress: message.isPending
-                ? null
-                : () => _showMessageActions(context),
-            child: bubble,
+          const SizedBox(width: 6),
+          // Long-press a message from another member to report it or block them.
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  key: Key('message-bubble-${message.id}'),
+                  onLongPress: canAct
+                      ? () => _showMessageActions(context)
+                      : null,
+                  child: bubble,
+                ),
+                ReactionChips(
+                  reactions: message.reactions,
+                  myUserId: myUserId,
+                  onTap: canAct ? onReact : null,
+                ),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -739,20 +899,37 @@ class _MessageBubble extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(
-              key: const Key('report-message'),
-              leading: const Icon(Icons.flag_outlined),
-              title: const Text('Report message'),
-              onTap: () {
+            ReactionPickerRow(
+              current: myReaction(message.reactions, myUserId),
+              onPick: (emoji) {
                 Navigator.of(sheetContext).pop();
-                showReportSheet(
-                  context,
-                  target: ReportTarget.groupMessage,
-                  targetId: message.id,
-                );
+                onReact?.call(emoji);
               },
             ),
-            if (sender != null)
+            ListTile(
+              key: const Key('reply-to-message'),
+              leading: const Icon(Icons.reply),
+              title: const Text('Reply'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                onReply?.call();
+              },
+            ),
+            if (!isMine)
+              ListTile(
+                key: const Key('report-message'),
+                leading: const Icon(Icons.flag_outlined),
+                title: const Text('Report message'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  showReportSheet(
+                    context,
+                    target: ReportTarget.groupMessage,
+                    targetId: message.id,
+                  );
+                },
+              ),
+            if (!isMine && sender != null)
               ListTile(
                 key: const Key('block-sender'),
                 leading: const Icon(Icons.block, color: AppColors.error),

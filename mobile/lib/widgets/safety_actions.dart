@@ -26,11 +26,8 @@ Future<void> showReportSheet(
     context: context,
     isScrollControlled: true,
     showDragHandle: true,
-    builder: (_) => _ReportSheet(
-      target: target,
-      targetId: targetId,
-      messenger: messenger,
-    ),
+    builder: (_) =>
+        _ReportSheet(target: target, targetId: targetId, messenger: messenger),
   );
 }
 
@@ -51,8 +48,8 @@ Future<bool> confirmAndBlockUser(
       title: Text('Block $userName?'),
       content: const Text(
         "They won't be able to see your posts or contact you, and you won't "
-        'see theirs. You can unblock them any time from Profile → Blocked '
-        'users.',
+        'see theirs. You can unblock them any time from Profile → Privacy & '
+        'Safety → Blocked users.',
       ),
       actions: [
         TextButton(
@@ -89,14 +86,13 @@ Future<void> unblockUser(BuildContext context, int userId) async {
   refreshAfterBlockChange(container);
 }
 
-/// Blocking/unblocking changes what almost every list returns (feed, nearby
+/// Blocking/unblocking changes what almost every list returns (posts, nearby
 /// listings, swap inbox, chats, events, comments) — drop their cached data so
 /// the next read is fetched fresh, rather than a blocked user's content
 /// lingering on screen until a manual pull-to-refresh.
 void refreshAfterBlockChange(ProviderContainer container) {
   container
     ..invalidate(blockedUsersProvider)
-    ..invalidate(homeFeedProvider)
     ..invalidate(postCommentsProvider)
     ..invalidate(authorPostsProvider)
     ..invalidate(nearbyListingsProvider)
@@ -132,11 +128,7 @@ class UserSafetyMenuButton extends StatelessWidget {
       tooltip: 'More options',
       onSelected: (action) async {
         if (action == 'report') {
-          showReportSheet(
-            context,
-            target: ReportTarget.user,
-            targetId: userId,
-          );
+          showReportSheet(context, target: ReportTarget.user, targetId: userId);
           return;
         }
 

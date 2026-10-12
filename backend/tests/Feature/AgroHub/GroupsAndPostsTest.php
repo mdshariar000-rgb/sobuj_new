@@ -43,19 +43,6 @@ class GroupsAndPostsTest extends TestCase
         $group->members()->attach($user->id, ['role' => GroupMemberRole::Member, 'joined_at' => now()]);
     }
 
-    public function test_general_feed_scope_excludes_group_posts(): void
-    {
-        $group = Group::factory()->create();
-
-        $generalPost = Post::factory()->create(['group_id' => null]);
-        $groupPost = Post::factory()->create(['group_id' => $group->id]);
-
-        $feedIds = Post::query()->generalFeed()->pluck('id');
-
-        $this->assertTrue($feedIds->contains($generalPost->id));
-        $this->assertFalse($feedIds->contains($groupPost->id));
-    }
-
     public function test_a_post_can_receive_comments_from_multiple_users(): void
     {
         $post = Post::factory()->create();

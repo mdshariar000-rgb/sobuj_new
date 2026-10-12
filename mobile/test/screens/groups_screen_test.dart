@@ -1,13 +1,28 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shobuj_mobile/models/group.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
+import 'package:shobuj_mobile/services/api_exception.dart';
+import 'package:shobuj_mobile/providers/group_providers.dart';
+import 'package:shobuj_mobile/screens/groups/group_chat_screen.dart';
 import 'package:shobuj_mobile/screens/groups/groups_screen.dart';
+import 'package:shobuj_mobile/services/group_realtime_channel.dart';
 
 import '../support/fake_api_client.dart';
 import '../support/fake_secure_storage_service.dart';
+
+class _FakeGroupRealtimeChannel extends GroupRealtimeChannel {
+  _FakeGroupRealtimeChannel() : super(dio: Dio(), groupId: 0);
+
+  @override
+  Future<void> connect() async {}
+
+  @override
+  Future<void> dispose() async {}
+}
 
 Group _buildGroup({
   required int id,
@@ -48,10 +63,19 @@ Future<void> _pumpGroupsScreen(
       overrides: [
         apiClientProvider.overrideWithValue(fakeClient),
         secureStorageProvider.overrideWithValue(fakeStorage),
+        // Opening a group chat from the list mustn't try a real socket.
+        groupRealtimeChannelProvider.overrideWith(
+          (ref, groupId) => _FakeGroupRealtimeChannel(),
+        ),
       ],
       child: const MaterialApp(home: GroupsScreen()),
     ),
   );
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openDiscover(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('groups-tab-discover')));
   await tester.pumpAndSettle();
 }
 
@@ -70,9 +94,15 @@ void main() {
 
     await _pumpGroupsScreen(tester, fakeClient);
 
+    // My groups (the default tab): only the one you're in, with its menu.
+    expect(find.text('My groups (1)'), findsOneWidget);
     expect(find.text('Tomato Growers'), findsOneWidget);
+    expect(find.text('Herb Enthusiasts'), findsNothing);
+    expect(find.byKey(const Key('group-menu-1')), findsOneWidget);
+
+    // Discover: the rest, each with Join.
+    await _openDiscover(tester);
     expect(find.text('Herb Enthusiasts'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Joined'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Join'), findsOneWidget);
   });
 
@@ -91,14 +121,86 @@ void main() {
         );
 
       await _pumpGroupsScreen(tester, fakeClient);
+      await _openDiscover(tester);
 
       expect(find.byIcon(Icons.verified), findsOneWidget);
     },
   );
 
+  testWidgets('only a joined group has a chat button, carrying its unread '
+      'count', (tester) async {
+    final fakeClient = FakeApiClient()
+      ..groupsResult = PaginatedResponse(
+        data: [
+          _buildGroup(
+            id: 1,
+            name: 'Tomato Growers',
+            isMember: true,
+            unreadCount: 3,
+          ),
+          _buildGroup(id: 2, name: 'Herb Enthusiasts', isMember: false),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 2,
+      );
+
+    await _pumpGroupsScreen(tester, fakeClient);
+
+    final chatButton = find.byKey(const Key('group-chat-button-1'));
+    await tester.ensureVisible(chatButton);
+    await tester.pumpAndSettle();
+    expect(chatButton, findsOneWidget);
+    expect(find.byKey(const Key('group-chat-button-2')), findsNothing);
+    expect(
+      find.descendant(of: chatButton, matching: find.text('3')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('the chat button opens the group chat and clears the unread '
+      'count', (tester) async {
+    final fakeClient = FakeApiClient()
+      ..groupsResult = PaginatedResponse(
+        data: [
+          _buildGroup(
+            id: 1,
+            name: 'Tomato Growers',
+            isMember: true,
+            unreadCount: 3,
+          ),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 1,
+      );
+
+    await _pumpGroupsScreen(tester, fakeClient);
+
+    final chatButton = find.byKey(const Key('group-chat-button-1'));
+    await tester.ensureVisible(chatButton);
+    await tester.pumpAndSettle();
+    await tester.tap(chatButton);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(GroupChatScreen), findsOneWidget);
+
+    Navigator.of(tester.element(find.byType(GroupChatScreen))).pop();
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: chatButton, matching: find.text('3')),
+      findsNothing,
+    );
+  });
+
   testWidgets('shows an empty state when there are no groups', (tester) async {
     await _pumpGroupsScreen(tester, FakeApiClient());
 
+    // My groups points you to Discover...
+    expect(find.text('No groups yet'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('groups-empty-discover')));
+    await tester.pumpAndSettle();
+    // ...which has nothing either.
     expect(find.text('No groups found'), findsOneWidget);
   });
 
@@ -145,75 +247,91 @@ void main() {
       );
 
     await _pumpGroupsScreen(tester, fakeClient);
+    await _openDiscover(tester);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Join'));
     await tester.pumpAndSettle();
 
     expect(fakeClient.joinedGroupId, 1);
-    expect(find.widgetWithText(FilledButton, 'Joined'), findsOneWidget);
+    // Joined: it moves off the Discover tab (and into My groups).
+    expect(find.text('Tomato Growers'), findsNothing);
   });
 
-  testWidgets('creating a group adds it to the top of the list', (
-    tester,
-  ) async {
+  testWidgets('users cannot create groups from the Groups tab', (tester) async {
     final fakeClient = FakeApiClient()
       ..groupsResult = PaginatedResponse(
         data: [_buildGroup(id: 1, name: 'Existing Group')],
         currentPage: 1,
         lastPage: 1,
         total: 1,
-      )
-      ..createGroupResult = _buildGroup(
-        id: 2,
-        name: 'Brand New Group',
-        isMember: true,
-        membersCount: 1,
       );
 
     await _pumpGroupsScreen(tester, fakeClient);
 
-    await tester.tap(find.widgetWithIcon(FloatingActionButton, Icons.add));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('create-group-name-field')),
-      'Brand New Group',
-    );
-    await tester.pump();
-    await tester.enterText(
-      find.byKey(const Key('create-group-slug-field')),
-      'brand-new-group',
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Brand New Group'), findsOneWidget);
-    expect(find.text('Existing Group'), findsOneWidget);
+    expect(find.byType(FloatingActionButton), findsNothing);
+    expect(find.text('Create a Group'), findsNothing);
   });
 
-  testWidgets('shows a real posts-today count alongside members when present', (
+  testWidgets('shows members and when the group was last active', (
     tester,
   ) async {
     final fakeClient = FakeApiClient()
       ..groupsResult = PaginatedResponse(
         data: [
-          _buildGroup(
+          Group(
             id: 1,
             name: 'Hydroponics Lab',
-            category: 'Hydro & Tech',
+            slug: 'hydroponics-lab',
             membersCount: 2300,
-            postsTodayCount: 45,
+            lastActivityAt: DateTime.now().subtract(const Duration(hours: 2)),
+            createdAt: DateTime(2026, 1, 1),
+          ),
+          Group(
+            id: 2,
+            name: 'Solo Group',
+            slug: 'solo-group',
+            membersCount: 1,
+            createdAt: DateTime(2026, 1, 1),
           ),
         ],
         currentPage: 1,
         lastPage: 1,
+        total: 2,
+      );
+
+    await _pumpGroupsScreen(tester, fakeClient);
+    await _openDiscover(tester);
+
+    expect(find.textContaining('2.3K members • Active 2h ago'), findsOneWidget);
+    expect(find.text('1 member'), findsOneWidget);
+  });
+
+  testWidgets('leaving asks first, and a failure is explained', (tester) async {
+    final fakeClient = FakeApiClient()
+      ..groupsResult = PaginatedResponse(
+        data: [_buildGroup(id: 1, name: 'Tomato Growers', isMember: true)],
+        currentPage: 1,
+        lastPage: 1,
         total: 1,
+      )
+      ..leaveGroupError = const ApiException(
+        message: 'The group creator cannot leave their own group.',
       );
 
     await _pumpGroupsScreen(tester, fakeClient);
 
-    expect(find.textContaining('2.3K members'), findsOneWidget);
-    expect(find.textContaining('45 posts today'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('group-menu-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('group-leave-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Leave Tomato Growers?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('confirm-leave-group')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('The group creator cannot leave their own group.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(

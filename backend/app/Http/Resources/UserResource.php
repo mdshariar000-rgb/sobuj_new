@@ -50,7 +50,30 @@ class UserResource extends JsonResource
             'bio' => $this->bio,
             'avatar_url' => $this->resource->avatarUrl(),
             'cover_photo_url' => $this->resource->coverPhotoUrl(),
-            'location_label' => $this->location_label,
+            // The label often starts with the full postcode ("LU2 0HR, High
+            // Town, Luton"), which pins someone down to a few houses — only
+            // the account itself sees that; everyone else gets the area.
+            'location_label' => $isSelf
+                ? $this->location_label
+                : self::withoutPostcode($this->location_label),
+            // Private: only the user themselves (and admins, on the panel).
+            'address' => $this->when($isSelf, fn () => [
+                'line1' => $this->address_line1,
+                'line2' => $this->address_line2,
+                'city' => $this->address_city,
+                'county' => $this->address_county,
+                'postcode' => $this->address_postcode,
+            ]),
+            // Accounts made before the address was required — the app asks
+            // for it before letting them continue.
+            'needs_address' => $this->when($isSelf, fn () => $this->address_postcode === null),
+            // False for a Google/Apple account with no password yet: deleting
+            // it confirms with that provider instead (see AuthController::destroy).
+            'has_password' => $this->when($isSelf, fn () => (bool) ($this->has_password ?? true)),
+            'signed_in_with' => $this->when($isSelf, fn () => array_values(array_filter([
+                $this->google_id !== null ? 'google' : null,
+                $this->apple_id !== null ? 'apple' : null,
+            ]))),
             'growing_interests' => $this->growing_interests ?? [],
             'experience_level' => $this->experience_level?->value,
             'growing_setup' => $this->growing_setup?->value,
@@ -60,6 +83,28 @@ class UserResource extends JsonResource
             'active_listings_count' => $this->when(
                 array_key_exists('active_listings_count', $this->resource->getAttributes()),
                 fn () => (int) $this->active_listings_count,
+            ),
+            // Only on GET /users/{id} — see UserController::show().
+            'seller_rating' => $this->when(
+                array_key_exists('seller_rating', $this->resource->getAttributes()),
+                fn () => $this->seller_rating,
+            ),
+            'seller_reviews_count' => $this->when(
+                array_key_exists('seller_reviews_count', $this->resource->getAttributes()),
+                fn () => (int) $this->seller_reviews_count,
+            ),
+            'completed_deals_count' => $this->when(
+                array_key_exists('completed_deals_count', $this->resource->getAttributes()),
+                fn () => (int) $this->completed_deals_count,
+            ),
+            'followers_count' => $this->whenCounted('followers'),
+            'following_count' => $this->whenCounted('following'),
+            // Only set where a viewer's identity is meaningful (a single-resource
+            // profile response) — never on a list a viewer isn't looking at one
+            // account through, same reasoning as PostResource::liked_by_me.
+            'is_following' => $this->when(
+                array_key_exists('is_following', $this->resource->getAttributes()),
+                fn () => (bool) $this->is_following,
             ),
             'created_at' => $this->created_at?->toIso8601String(),
         ];
@@ -88,5 +133,24 @@ class UserResource extends JsonResource
         }
 
         return $this->resource->getFuzzyCoordinates();
+    }
+
+    /**
+     * Drops any UK postcode (full, like "LU2 0HR", or just its first half,
+     * like "LU2") from a comma-separated location label.
+     */
+    public static function withoutPostcode(?string $label): ?string
+    {
+        if ($label === null) {
+            return null;
+        }
+
+        $parts = array_filter(
+            array_map('trim', explode(',', $label)),
+            fn (string $part) => $part !== ''
+                && ! preg_match('/^[A-Z]{1,2}\d[A-Z\d]?(\s*\d[A-Z]{2})?$/i', $part),
+        );
+
+        return $parts === [] ? null : implode(', ', $parts);
     }
 }

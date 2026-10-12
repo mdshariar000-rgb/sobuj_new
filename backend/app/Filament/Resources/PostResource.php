@@ -5,7 +5,6 @@ namespace App\Filament\Resources;
 use App\Enums\PostModerationStatus;
 use App\Filament\Resources\PostResource\Pages;
 use App\Models\Post;
-use App\Models\PostCategory;
 use Filament\Forms\Components\Textarea;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -69,12 +68,8 @@ class PostResource extends Resource
                     ->searchable()
                     ->sortable(),
 
-                TextColumn::make('category')
-                    ->badge(),
-
                 TextColumn::make('group.name')
                     ->label('Group')
-                    ->default('Home Feed')
                     ->sortable(),
 
                 TextColumn::make('likes_count')
@@ -102,9 +97,6 @@ class PostResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                SelectFilter::make('category')
-                    ->options(fn () => PostCategory::query()->orderBy('name')->pluck('name', 'name')->all()),
-
                 SelectFilter::make('moderation_status')
                     ->options(self::enumOptions(PostModerationStatus::cases())),
             ])

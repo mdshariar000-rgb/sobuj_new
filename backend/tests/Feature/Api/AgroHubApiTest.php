@@ -4,18 +4,15 @@ namespace Tests\Feature\Api;
 
 use App\Enums\EventStatus;
 use App\Enums\GroupMemberRole;
-use App\Models\AiConversation;
-use App\Models\AiMessage;
+use App\Http\Controllers\Api\V1\RetiredFeatureController;
 use App\Models\Comment;
 use App\Models\Event;
 use App\Models\Group;
 use App\Models\Post;
 use App\Models\User;
-use App\Services\AgriAssistantService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -25,9 +22,10 @@ class AgroHubApiTest extends TestCase
 
     // --- Groups ---------------------------------------------------------
 
-    public function test_a_user_can_create_a_group_and_becomes_its_admin_member(): void
+    public function test_an_admin_can_create_a_group_and_becomes_its_admin_member(): void
     {
-        $user = User::factory()->create();
+        // Only site admins create groups — see GroupPolicy::create().
+        $user = User::factory()->create(['is_admin' => true]);
         Sanctum::actingAs($user);
 
         $response = $this->postJson('/api/v1/groups', [
@@ -75,7 +73,7 @@ class AgroHubApiTest extends TestCase
     {
         Storage::fake('public');
 
-        $user = User::factory()->create();
+        $user = User::factory()->create(['is_admin' => true]);
         Sanctum::actingAs($user);
 
         $response = $this->post('/api/v1/groups', [
@@ -327,21 +325,6 @@ class AgroHubApiTest extends TestCase
 
     // --- Posts & Comments -------------------------------------------------
 
-    public function test_the_home_feed_only_returns_general_posts_not_group_posts(): void
-    {
-        $group = Group::factory()->create();
-        $generalPost = Post::factory()->create(['group_id' => null]);
-        Post::factory()->create(['group_id' => $group->id]);
-
-        Sanctum::actingAs(User::factory()->create());
-
-        $response = $this->getJson('/api/v1/feed');
-
-        $response->assertOk();
-        $response->assertJsonCount(1, 'data');
-        $response->assertJsonPath('data.0.id', $generalPost->id);
-    }
-
     public function test_posting_into_a_group_requires_membership(): void
     {
         $group = Group::factory()->create();
@@ -356,103 +339,6 @@ class AgroHubApiTest extends TestCase
         $this->postJson('/api/v1/posts', ['group_id' => $group->id, 'body' => 'Hello group'])
             ->assertCreated()
             ->assertJsonPath('data.group_id', $group->id);
-    }
-
-    public function test_the_home_feed_search_matches_post_body_or_author_name(): void
-    {
-        $tomatoPost = Post::factory()->create(['group_id' => null, 'body' => 'My tomatoes are thriving!']);
-        Post::factory()->create(['group_id' => null, 'body' => 'Anyone into ginger?']);
-        $namedAuthor = User::factory()->create(['name' => 'Elena Rostova']);
-        $byElena = Post::factory()->create(['group_id' => null, 'author_id' => $namedAuthor->id, 'body' => 'Unrelated body text']);
-
-        Sanctum::actingAs(User::factory()->create());
-
-        $bodyMatch = $this->getJson('/api/v1/feed?search=tomato');
-        $bodyMatch->assertOk();
-        $bodyMatch->assertJsonCount(1, 'data');
-        $bodyMatch->assertJsonPath('data.0.id', $tomatoPost->id);
-
-        $authorMatch = $this->getJson('/api/v1/feed?search=Rostova');
-        $authorMatch->assertOk();
-        $authorMatch->assertJsonCount(1, 'data');
-        $authorMatch->assertJsonPath('data.0.id', $byElena->id);
-
-        $noMatch = $this->getJson('/api/v1/feed?search=nonexistentterm');
-        $noMatch->assertOk();
-        $noMatch->assertJsonCount(0, 'data');
-    }
-
-    public function test_post_categories_are_admin_managed_and_a_made_up_one_is_rejected(): void
-    {
-        Sanctum::actingAs(User::factory()->create());
-
-        // The seeded admin-managed list — see the post_categories migration.
-        $categories = $this->getJson('/api/v1/post-categories');
-        $categories->assertOk();
-        $names = collect($categories->json('data'))->pluck('name');
-        $this->assertContains('General', $names);
-        $this->assertContains('Disease Alert', $names);
-        $this->assertContains('Harvest', $names);
-
-        $response = $this->postJson('/api/v1/posts', [
-            'body' => 'Hello',
-            'category' => 'Weather Updates',
-        ]);
-
-        $response->assertUnprocessable();
-        $response->assertJsonValidationErrors(['category']);
-    }
-
-    public function test_a_post_defaults_to_the_general_category(): void
-    {
-        Sanctum::actingAs(User::factory()->create());
-
-        $response = $this->postJson('/api/v1/posts', ['body' => 'Just chatting about the garden.']);
-
-        $response->assertCreated();
-        $response->assertJsonPath('data.category', 'General');
-    }
-
-    public function test_a_post_can_be_created_with_a_real_category(): void
-    {
-        Sanctum::actingAs(User::factory()->create());
-
-        $response = $this->postJson('/api/v1/posts', [
-            'body' => 'My tomato leaves have brown spots — anyone seen this?',
-            'category' => 'Disease Alert',
-        ]);
-
-        $response->assertCreated();
-        $response->assertJsonPath('data.category', 'Disease Alert');
-    }
-
-    public function test_the_home_feed_category_filter_only_returns_matching_posts(): void
-    {
-        $diseasePost = Post::factory()->create(['group_id' => null, 'category' => 'Disease Alert']);
-        Post::factory()->create(['group_id' => null, 'category' => 'Harvest']);
-        Post::factory()->create(['group_id' => null, 'category' => 'General']);
-
-        Sanctum::actingAs(User::factory()->create());
-
-        $response = $this->getJson('/api/v1/feed?category='.urlencode('Disease Alert'));
-
-        $response->assertOk();
-        $response->assertJsonCount(1, 'data');
-        $response->assertJsonPath('data.0.id', $diseasePost->id);
-    }
-
-    public function test_the_home_feed_with_no_category_filter_returns_every_category(): void
-    {
-        Post::factory()->create(['group_id' => null, 'category' => 'Disease Alert']);
-        Post::factory()->create(['group_id' => null, 'category' => 'Harvest']);
-        Post::factory()->create(['group_id' => null, 'category' => 'General']);
-
-        Sanctum::actingAs(User::factory()->create());
-
-        $response = $this->getJson('/api/v1/feed');
-
-        $response->assertOk();
-        $response->assertJsonCount(3, 'data');
     }
 
     public function test_a_user_can_like_and_unlike_a_post(): void
@@ -485,24 +371,6 @@ class AgroHubApiTest extends TestCase
         $this->postJson("/api/v1/posts/{$post->id}/like")
             ->assertOk()
             ->assertJsonPath('data.likes_count', 1);
-    }
-
-    public function test_the_home_feed_reports_likes_count_and_liked_by_me_per_post(): void
-    {
-        $post = Post::factory()->create(['group_id' => null]);
-        $liker = User::factory()->create();
-        $post->likedBy()->attach($liker->id);
-
-        Sanctum::actingAs($liker);
-        $response = $this->getJson('/api/v1/feed');
-
-        $response->assertOk();
-        $response->assertJsonPath('data.0.likes_count', 1);
-        $response->assertJsonPath('data.0.liked_by_me', true);
-
-        Sanctum::actingAs(User::factory()->create());
-        $response = $this->getJson('/api/v1/feed');
-        $response->assertJsonPath('data.0.liked_by_me', false);
     }
 
     public function test_a_user_can_reply_to_a_top_level_comment(): void
@@ -610,7 +478,7 @@ class AgroHubApiTest extends TestCase
     public function test_a_posts_owner_can_delete_a_comment_someone_else_left_on_it(): void
     {
         $postOwner = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $postOwner->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $postOwner->id]);
 
         $commenter = User::factory()->create();
         Sanctum::actingAs($commenter);
@@ -628,9 +496,7 @@ class AgroHubApiTest extends TestCase
         $author = User::factory()->create();
         $post = Post::factory()->create([
             'author_id' => $author->id,
-            'group_id' => null,
             'body' => 'Original body',
-            'category' => 'General',
         ]);
 
         $other = User::factory()->create();
@@ -638,33 +504,11 @@ class AgroHubApiTest extends TestCase
         $this->patchJson("/api/v1/posts/{$post->id}", ['body' => 'Hijacked'])->assertForbidden();
 
         Sanctum::actingAs($author);
-        $response = $this->patchJson("/api/v1/posts/{$post->id}", [
-            'body' => 'Updated body',
-            'category' => 'Harvest',
-        ]);
+        $response = $this->patchJson("/api/v1/posts/{$post->id}", ['body' => 'Updated body']);
 
         $response->assertOk();
         $response->assertJsonPath('data.body', 'Updated body');
-        $response->assertJsonPath('data.category', 'Harvest');
-        $this->assertDatabaseHas('posts', [
-            'id' => $post->id,
-            'body' => 'Updated body',
-            'category' => 'Harvest',
-        ]);
-    }
-
-    public function test_updating_a_post_with_a_made_up_category_is_rejected(): void
-    {
-        $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
-        Sanctum::actingAs($author);
-
-        $response = $this->patchJson("/api/v1/posts/{$post->id}", [
-            'category' => 'Not A Real Category',
-        ]);
-
-        $response->assertUnprocessable();
-        $response->assertJsonValidationErrors(['category']);
+        $this->assertDatabaseHas('posts', ['id' => $post->id, 'body' => 'Updated body']);
     }
 
     public function test_removing_a_posts_image_clears_it(): void
@@ -672,7 +516,6 @@ class AgroHubApiTest extends TestCase
         $author = User::factory()->create();
         $post = Post::factory()->create([
             'author_id' => $author->id,
-            'group_id' => null,
             'image_path' => 'posts/existing.jpg',
         ]);
         Sanctum::actingAs($author);
@@ -1037,116 +880,61 @@ class AgroHubApiTest extends TestCase
         $this->assertSame($event->attendees()->count(), $response->json('data.attendees_count'));
     }
 
-    // --- Agri-AI Assistant --------------------------------------------------
+    // --- Agri-AI (removed) ------------------------------------------------
 
-    /**
-     * A user with a real (locally-inserted, no live Stripe call) active
-     * Cashier subscription row — the Agri-AI Assistant is subscription-gated
-     * end to end, so every test exercising it needs one.
-     */
-    private function subscribedUser(): User
+    public function test_events_can_be_searched_and_ones_near_the_user_come_first(): void
+    {
+        $user = User::factory()->create(['address_city' => 'Luton']);
+        $host = User::factory()->create(['name' => 'Rooftop Farmers']);
+        $far = Event::factory()->create(['title' => 'Seed swap', 'location' => 'Mirpur, Dhaka', 'host_id' => $host->id, 'starts_at' => now()->addDay(), 'ends_at' => now()->addDay()->addHours(2)]);
+        $near = Event::factory()->create(['title' => 'Compost workshop', 'location' => 'Wardown Park, Luton', 'starts_at' => now()->addDays(5), 'ends_at' => now()->addDays(5)->addHours(2)]);
+
+        Sanctum::actingAs($user);
+
+        $all = $this->getJson('/api/v1/events?for_you=1')->assertOk()->json('data');
+        $this->assertSame([$near->id, $far->id], array_column($all, 'id'));
+        $this->assertSame([true, false], array_column($all, 'is_near_you'));
+
+        $this->assertSame([$near->id], array_column($this->getJson('/api/v1/events?search=compost')->json('data'), 'id'));
+        $this->assertSame([$far->id], array_column($this->getJson('/api/v1/events?search=rooftop')->json('data'), 'id'));
+        $this->assertSame([$near->id], array_column($this->getJson('/api/v1/events?search=luton')->json('data'), 'id'));
+    }
+
+    public function test_events_can_be_narrowed_to_ones_the_user_is_going_to(): void
     {
         $user = User::factory()->create();
+        $going = Event::factory()->create(['starts_at' => now()->addDay(), 'ends_at' => now()->addDay()->addHour()]);
+        Event::factory()->create(['starts_at' => now()->addDay(), 'ends_at' => now()->addDay()->addHour()]);
 
-        $user->subscriptions()->create([
-            'type' => 'default',
-            'stripe_id' => 'sub_test_'.Str::random(16),
-            'stripe_status' => 'active',
-            'stripe_price' => 'price_test_monthly',
-            'quantity' => 1,
-        ]);
+        Sanctum::actingAs($user);
+        $this->postJson("/api/v1/events/{$going->id}/rsvp", ['status' => 'going'])->assertOk();
 
-        return $user;
+        $this->assertSame([$going->id], array_column($this->getJson('/api/v1/events?going=1')->json('data'), 'id'));
     }
 
-    public function test_an_unsubscribed_user_cannot_use_the_agri_ai_assistant(): void
+    public function test_removed_features_answer_old_apps_with_a_readable_message(): void
     {
+        $post = Post::factory()->create();
         Sanctum::actingAs(User::factory()->create());
 
-        $this->getJson('/api/v1/ai/conversations')->assertForbidden();
-        $this->postJson('/api/v1/ai/messages', ['body' => 'Hello'])->assertForbidden();
-    }
+        foreach ([
+            // Agri-AI and its Premium subscription
+            ['GET', '/api/v1/ai/conversations'],
+            ['GET', '/api/v1/ai/conversations/1'],
+            ['POST', '/api/v1/ai/messages'],
+            ['GET', '/api/v1/subscriptions/me'],
+            ['POST', '/api/v1/subscriptions'],
+            ['DELETE', '/api/v1/subscriptions/me'],
+            ['GET', '/api/v1/config/stripe-key'],
+            // The personal Home timeline
+            ['GET', '/api/v1/feed'],
+            ['GET', '/api/v1/post-categories'],
+            ['POST', "/api/v1/posts/{$post->id}/share"],
+        ] as [$method, $uri]) {
+            $this->json($method, $uri)
+                ->assertStatus(410)
+                ->assertJsonPath('message', RetiredFeatureController::MESSAGE);
+        }
 
-    public function test_sending_a_first_ai_message_creates_a_conversation_and_returns_an_assistant_reply(): void
-    {
-        $this->app->instance(AgriAssistantService::class, new FakeAgriAssistantService);
-
-        Sanctum::actingAs($this->subscribedUser());
-
-        $response = $this->postJson('/api/v1/ai/messages', [
-            'body' => 'Why are my tomato leaves curling?',
-        ]);
-
-        $response->assertCreated();
-        $response->assertJsonCount(2, 'data.messages');
-        $response->assertJsonPath('data.messages.0.role', 'user');
-        $response->assertJsonPath('data.messages.0.body', 'Why are my tomato leaves curling?');
-        $response->assertJsonPath('data.messages.1.role', 'assistant');
-        $response->assertJsonPath('data.messages.1.body', 'Fake diagnosis: likely heat stress.');
-    }
-
-    public function test_sending_a_leaf_photo_with_no_caption_is_accepted_and_stored(): void
-    {
-        $this->app->instance(AgriAssistantService::class, new FakeAgriAssistantService);
-        Storage::fake('public');
-
-        Sanctum::actingAs($this->subscribedUser());
-
-        $response = $this->postJson('/api/v1/ai/messages', [
-            'photo' => UploadedFile::fake()->image('leaf.jpg'),
-        ]);
-
-        $response->assertCreated();
-        $this->assertNotNull($response->json('data.messages.0.image_url'));
-
-        $storedPath = AiMessage::query()->where('role', 'user')->sole()->image_path;
-        Storage::disk('public')->assertExists($storedPath);
-    }
-
-    public function test_a_follow_up_message_appends_to_the_same_conversation_and_a_stranger_cannot_view_it(): void
-    {
-        $this->app->instance(AgriAssistantService::class, new FakeAgriAssistantService);
-
-        $owner = $this->subscribedUser();
-        Sanctum::actingAs($owner);
-
-        $first = $this->postJson('/api/v1/ai/messages', ['body' => 'First question']);
-        $conversationId = $first->json('data.id');
-
-        $this->postJson('/api/v1/ai/messages', [
-            'conversation_id' => $conversationId,
-            'body' => 'Follow-up question',
-        ])->assertCreated();
-
-        $show = $this->getJson("/api/v1/ai/conversations/{$conversationId}");
-        $show->assertOk();
-        $show->assertJsonCount(4, 'data.messages');
-
-        // Also subscribed, so this 403 is unambiguously the ownership policy
-        // rejecting them — not the subscription gate.
-        $stranger = $this->subscribedUser();
-        Sanctum::actingAs($stranger);
-        $this->getJson("/api/v1/ai/conversations/{$conversationId}")->assertForbidden();
-    }
-
-    public function test_sending_neither_body_nor_photo_is_rejected(): void
-    {
-        Sanctum::actingAs(User::factory()->create());
-
-        $this->postJson('/api/v1/ai/messages', [])->assertUnprocessable();
-    }
-}
-
-/**
- * Test double standing in for the real Gemini-backed service so the suite
- * never makes a live network call or requires a real GEMINI_API_KEY.
- */
-class FakeAgriAssistantService extends AgriAssistantService
-{
-    public function __construct() {}
-
-    public function reply(AiConversation $conversation): string
-    {
-        return 'Fake diagnosis: likely heat stress.';
     }
 }

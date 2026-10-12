@@ -16,15 +16,15 @@ class PostAndGroupModerationTest extends TestCase
 
     // --- Post moderation (site-wide, distinct from group approval) --------
 
-    public function test_a_deactivated_home_feed_post_is_hidden_from_the_feed(): void
+    public function test_a_deactivated_post_is_hidden_from_its_group(): void
     {
-        $post = Post::factory()->create(['group_id' => null]);
+        $post = Post::factory()->create();
         $post->moderation_status = 'deactivated';
         $post->save();
 
         Sanctum::actingAs(User::factory()->create());
 
-        $response = $this->getJson('/api/v1/feed');
+        $response = $this->getJson("/api/v1/groups/{$post->group_id}/posts");
 
         $response->assertOk();
         $response->assertJsonMissing(['id' => $post->id]);
@@ -33,7 +33,7 @@ class PostAndGroupModerationTest extends TestCase
     public function test_a_banned_post_is_hidden_even_from_its_own_author(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['group_id' => null, 'author_id' => $author->id]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
         $post->moderation_status = 'banned';
         $post->save();
 

@@ -5,16 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../../models/post.dart' show Post, kDefaultPostCategory;
-import '../../../providers/post_providers.dart';
+import '../../../models/post.dart';
 import '../../../services/api_exception.dart';
 import '../../../theme/app_colors.dart';
 
 /// Opens the "edit post" composer as a modal bottom sheet, prefilled with
-/// [post]'s real current body/category/image — mirrors CreatePostSheet's
-/// look, with a submit callback the caller supplies so it can route the
-/// PATCH through whichever provider actually owns this post's list (Home
-/// Feed, a group's discussion thread, or "My Posts").
+/// [post]'s current body/image, with a submit callback the caller supplies
+/// so it can route the PATCH through whichever provider owns this post's
+/// list (a group's discussion thread, or "My Posts").
 Future<void> showEditPostSheet(
   BuildContext context, {
   required Post post,
@@ -35,7 +33,6 @@ typedef EditPostSubmit =
     Future<void> Function(
       WidgetRef ref,
       String body,
-      String? category,
       File? newImage,
       bool removeImage,
     );
@@ -52,11 +49,6 @@ class EditPostSheet extends ConsumerStatefulWidget {
 
 class _EditPostSheetState extends ConsumerState<EditPostSheet> {
   late final _bodyController = TextEditingController(text: widget.post.body);
-
-  /// null selects the "General" chip, same convention as CreatePostSheet.
-  late String? _category = widget.post.category == kDefaultPostCategory
-      ? null
-      : widget.post.category;
 
   /// A newly picked replacement photo. Null means "keep whatever
   /// [_removeExistingImage] says about the post's current photo".
@@ -113,7 +105,6 @@ class _EditPostSheetState extends ConsumerState<EditPostSheet> {
       await widget.onSubmit(
         ref,
         _bodyController.text.trim(),
-        _category,
         _newImage,
         _removeExistingImage && _newImage == null,
       );
@@ -127,8 +118,6 @@ class _EditPostSheetState extends ConsumerState<EditPostSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final categoriesAsync = ref.watch(postCategoriesProvider);
-
     return Padding(
       padding: EdgeInsets.only(
         left: 20,
@@ -163,46 +152,6 @@ class _EditPostSheetState extends ConsumerState<EditPostSheet> {
             ),
           ),
           const SizedBox(height: 12),
-          categoriesAsync.when(
-            loading: () => const SizedBox(
-              height: 32,
-              child: Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            ),
-            error: (error, _) => const SizedBox.shrink(),
-            data: (categories) {
-              if (categories.isEmpty) return const SizedBox.shrink();
-              return Wrap(
-                spacing: 8,
-                children: categories.map((category) {
-                  final isSelected =
-                      _category == category.name ||
-                      (_category == null &&
-                          category.name.toLowerCase() == 'general');
-                  return ChoiceChip(
-                    label: Text(category.name),
-                    selected: isSelected,
-                    onSelected: _isSubmitting
-                        ? null
-                        : (_) => setState(() => _category = category.name),
-                    selectedColor: AppColors.primary,
-                    labelStyle: TextStyle(
-                      color: isSelected ? Colors.white : AppColors.textDark,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    backgroundColor: AppColors.surfaceMuted,
-                    shape: const StadiumBorder(),
-                    side: BorderSide.none,
-                  );
-                }).toList(growable: false),
-              );
-            },
-          ),
           const SizedBox(height: 12),
           if (_newImage != null)
             _ImagePreview(

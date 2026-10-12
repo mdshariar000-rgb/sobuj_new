@@ -15,7 +15,7 @@ return new class extends Migration
         // Native MySQL ENUM column — Laravel's schema builder can't append a value
         // to an existing enum list, so this modifies the column definition directly.
         DB::statement(
-            "ALTER TABLE listings MODIFY COLUMN transaction_type ".
+            'ALTER TABLE listings MODIFY COLUMN transaction_type '.
             "ENUM('swap', 'free', 'sell', 'swap_or_cash', 'wanted') NOT NULL"
         );
 
@@ -37,7 +37,7 @@ return new class extends Migration
         Schema::dropIfExists('saved_listings');
 
         DB::statement(
-            "ALTER TABLE listings MODIFY COLUMN transaction_type ".
+            'ALTER TABLE listings MODIFY COLUMN transaction_type '.
             "ENUM('swap', 'free', 'sell', 'swap_or_cash') NOT NULL"
         );
     }

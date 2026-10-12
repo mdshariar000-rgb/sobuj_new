@@ -148,7 +148,7 @@ class ProfileTest extends TestCase
         $this->getJson("/api/v1/listings/{$listing->id}")->assertJsonPath('data.views_count', 1);
     }
 
-    public function test_home_feed_can_be_filtered_to_one_authors_posts(): void
+    public function test_a_profile_lists_only_that_users_posts(): void
     {
         $author = User::factory()->create();
         $other = User::factory()->create();
@@ -156,10 +156,21 @@ class ProfileTest extends TestCase
         Post::factory()->create(['author_id' => $other->id]);
 
         Sanctum::actingAs($author);
-        $response = $this->getJson("/api/v1/feed?author_id={$author->id}");
+        $response = $this->getJson("/api/v1/users/{$author->id}/posts");
 
         $response->assertOk();
         $ids = collect($response->json('data'))->pluck('id')->all();
         $this->assertCount(1, $ids);
+    }
+
+    public function test_other_users_see_the_area_but_not_the_postcode(): void
+    {
+        $user = User::factory()->create(['location_label' => 'LU2 0HR, High Town, Luton, England']);
+
+        Sanctum::actingAs($user);
+        $this->getJson('/api/v1/auth/me')->assertJsonPath('data.location_label', 'LU2 0HR, High Town, Luton, England');
+
+        Sanctum::actingAs(User::factory()->create());
+        $this->getJson("/api/v1/users/{$user->id}")->assertJsonPath('data.location_label', 'High Town, Luton, England');
     }
 }

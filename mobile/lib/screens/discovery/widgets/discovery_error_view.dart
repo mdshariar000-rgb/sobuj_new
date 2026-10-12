@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../providers/location_providers.dart';
 import '../../../services/api_exception.dart';
 
-/// Turns whatever error nearbyListingsProvider/deviceLocationProvider throws
+/// Turns whatever error nearbyListingsProvider/accountLocationProvider throws
 /// into a message a user can actually act on, with a retry button.
 class DiscoveryErrorView extends StatelessWidget {
   const DiscoveryErrorView({
@@ -41,21 +41,9 @@ class DiscoveryErrorView extends StatelessWidget {
 
   (IconData, String) _describe(Object error) {
     return switch (error) {
-      LocationServiceDisabledException() => (
+      AccountLocationMissingException() => (
         Icons.location_off,
-        'Location services are turned off. Enable them to discover nearby listings.',
-      ),
-      LocationPermissionPermanentlyDeniedException() => (
-        Icons.location_disabled,
-        'Location permission is permanently denied. Enable it for this app in your device settings.',
-      ),
-      LocationPermissionDeniedException() => (
-        Icons.location_disabled,
-        'Location permission is required to find listings near you.',
-      ),
-      LocationTimeoutException() => (
-        Icons.location_searching,
-        'Could not get your location — check your signal and try again.',
+        'Your account has no location set. Add one to see listings near you.',
       ),
       ApiException(:final message) => (Icons.cloud_off, message),
       _ => (Icons.error_outline, 'Something went wrong. Please try again.'),

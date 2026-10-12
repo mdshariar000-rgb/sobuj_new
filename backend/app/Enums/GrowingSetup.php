@@ -10,6 +10,7 @@ enum GrowingSetup: string
     case Rooftop = 'rooftop';
     case CommunityGarden = 'community_garden';
     case Greenhouse = 'greenhouse';
+    case Allotment = 'allotment';
 
     public function label(): string
     {
@@ -20,6 +21,7 @@ enum GrowingSetup: string
             self::Rooftop => 'Rooftop',
             self::CommunityGarden => 'Community Garden',
             self::Greenhouse => 'Greenhouse',
+            self::Allotment => 'Allotment',
         };
     }
 }

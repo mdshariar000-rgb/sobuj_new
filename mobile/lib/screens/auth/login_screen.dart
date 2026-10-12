@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../providers/auth_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
+import 'forgot_password_screen.dart';
 import 'register_screen.dart';
+import 'widgets/social_sign_in_buttons.dart';
 import 'widgets/auth_error_banner.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -99,12 +101,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isBiometricSubmitting = false);
     }
-  }
-
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
   }
 
   @override
@@ -254,13 +250,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            const Text('Remember me'),
+                            const Flexible(child: Text('Remember me')),
                             const Spacer(),
                             TextButton(
-                              onPressed: isBusy
-                                  ? null
-                                  : () => _comingSoon('Password reset'),
-                              child: const Text('Forgot Password?'),
+                              key: const Key('forgot-password-link'),
+                              onPressed: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => ForgotPasswordScreen(
+                                    initialEmail: _emailController.text.trim(),
+                                  ),
+                                ),
+                              ),
+                              child: const Text('Forgot password?'),
                             ),
                           ],
                         ),
@@ -298,53 +299,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                         ],
                         const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            const Expanded(child: Divider()),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Text(
-                                'OR CONTINUE WITH',
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(color: AppColors.textMuted),
-                              ),
-                            ),
-                            const Expanded(child: Divider()),
-                          ],
+                        SocialSignInButtons(
+                          dividerLabel: 'OR CONTINUE WITH',
+                          enabled: !isBusy,
                         ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: isBusy
-                                    ? null
-                                    : () => _comingSoon('Google sign-in'),
-                                icon: const Text(
-                                  'G',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.primary,
-                                  ),
-                                ),
-                                label: const Text('Google'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: isBusy
-                                    ? null
-                                    : () => _comingSoon('Apple sign-in'),
-                                icon: const Icon(Icons.apple, size: 20),
-                                label: const Text('Apple'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 12),
                         TextButton(
                           onPressed: isBusy
                               ? null

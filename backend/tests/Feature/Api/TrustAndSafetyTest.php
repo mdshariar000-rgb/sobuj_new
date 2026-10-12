@@ -4,6 +4,7 @@ namespace Tests\Feature\Api;
 
 use App\Enums\GroupMemberRole;
 use App\Enums\ReportStatus;
+use App\Enums\ReportTargetType;
 use App\Models\Comment;
 use App\Models\Group;
 use App\Models\GroupMessage;
@@ -98,26 +99,29 @@ class TrustAndSafetyTest extends TestCase
         ])->assertUnprocessable()->assertJsonValidationErrors('reason');
     }
 
-    public function test_blocking_hides_the_blocked_users_posts_from_the_feed_both_ways(): void
+    public function test_blocking_hides_the_blocked_users_posts_from_groups_both_ways(): void
     {
         $me = User::factory()->create();
         $blocked = User::factory()->create();
         $other = User::factory()->create();
-        $blockedPost = Post::factory()->create(['author_id' => $blocked->id]);
-        $otherPost = Post::factory()->create(['author_id' => $other->id]);
+        $group = Group::factory()->create();
+        $blockedPost = Post::factory()->create(['author_id' => $blocked->id, 'group_id' => $group->id]);
+        $otherPost = Post::factory()->create(['author_id' => $other->id, 'group_id' => $group->id]);
 
         Sanctum::actingAs($me);
         $this->postJson("/api/v1/users/{$blocked->id}/block")->assertOk();
 
-        $ids = collect($this->getJson('/api/v1/feed')->assertOk()->json('data'))->pluck('id');
+        $ids = collect($this->getJson("/api/v1/groups/{$group->id}/posts")->assertOk()->json('data'))->pluck('id');
         $this->assertTrue($ids->contains($otherPost->id));
         $this->assertFalse($ids->contains($blockedPost->id));
 
         // The blocked user can't see the blocker's posts either.
-        $myPost = Post::factory()->create(['author_id' => $me->id]);
+        $myPost = Post::factory()->create(['author_id' => $me->id, 'group_id' => $group->id]);
         Sanctum::actingAs($blocked);
-        $ids = collect($this->getJson('/api/v1/feed')->json('data'))->pluck('id');
+        $ids = collect($this->getJson("/api/v1/groups/{$group->id}/posts")->json('data'))->pluck('id');
         $this->assertFalse($ids->contains($myPost->id));
+        // ...nor their profile's posts.
+        $this->getJson("/api/v1/users/{$me->id}/posts")->assertNotFound();
     }
 
     public function test_blocking_is_idempotent_and_can_be_undone(): void
@@ -203,7 +207,7 @@ class TrustAndSafetyTest extends TestCase
     {
         $report = new Report;
         $report->reporter_id = User::factory()->create()->id;
-        $report->target_type = \App\Enums\ReportTargetType::Post;
+        $report->target_type = ReportTargetType::Post;
         $report->target_id = Post::factory()->create()->id;
         $report->reason = 'spam';
         $report->status = ReportStatus::Pending;

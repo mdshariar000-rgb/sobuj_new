@@ -59,7 +59,7 @@ class StatsOverviewWidget extends BaseWidget
                 ->icon('heroicon-o-user-plus')
                 ->color('success'),
 
-            Stat::make('Active Groups', Group::query()->where('status', GroupStatus::Active)->count())
+            Stat::make('Active Groups', Group::query()->listed()->where('status', GroupStatus::Active)->count())
                 ->description('Not deactivated or banned')
                 ->icon('heroicon-o-user-group')
                 ->color('primary'),

@@ -29,7 +29,7 @@ class SplashScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               Text(
-                'Agro Hub',
+                'Shobuj',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
@@ -37,7 +37,8 @@ class SplashScreen extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                'Grow smarter, together.',
+                'Connecting communities through sustainable gardening and nature.',
+                textAlign: TextAlign.center,
                 style: Theme.of(
                   context,
                 ).textTheme.bodyMedium?.copyWith(color: AppColors.mint),

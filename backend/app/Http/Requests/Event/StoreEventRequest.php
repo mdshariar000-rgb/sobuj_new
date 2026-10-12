@@ -30,6 +30,11 @@ class StoreEventRequest extends FormRequest
             'starts_at' => ['required', 'date'],
             'ends_at' => ['nullable', 'date', 'after:starts_at'],
             'capacity' => ['nullable', 'integer', 'min:1'],
+            // Shown on the event; paid at the door, not through the app.
+            'registration_fee' => ['nullable', 'numeric', 'min:0', 'max:99999'],
+            // Other dates the host is considering, besides starts_at.
+            'proposed_dates' => ['nullable', 'array', 'max:10'],
+            'proposed_dates.*' => ['date'],
             'status' => ['nullable', Rule::enum(EventStatus::class)],
         ];
     }

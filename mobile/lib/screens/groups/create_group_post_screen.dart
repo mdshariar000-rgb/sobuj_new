@@ -17,7 +17,7 @@ import '../../widgets/user_avatar.dart';
 /// dedicated Post button) without changing the Home Feed's UX.
 ///
 /// Deliberately omits everything in the reference that isn't backed by real
-/// data: topic/tag chips (posts have no tagging taxonomy), "Agri-AI Scan"
+/// data: topic/tag chips (posts have no tagging taxonomy), an "AI scan"
 /// attachment (no auto-diagnosis pipeline), "Tag Members" (no mention
 /// feature), "Location & Microclimate" (no per-post location field),
 /// multi-photo upload (Post only stores one image), and the group-specific
@@ -37,8 +37,7 @@ class CreateGroupPostScreen extends ConsumerStatefulWidget {
       _CreateGroupPostScreenState();
 }
 
-class _CreateGroupPostScreenState
-    extends ConsumerState<CreateGroupPostScreen> {
+class _CreateGroupPostScreenState extends ConsumerState<CreateGroupPostScreen> {
   final _bodyController = TextEditingController();
   File? _image;
   bool _isSubmitting = false;

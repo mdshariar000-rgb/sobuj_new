@@ -7,9 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Shobuj Mobile</string>
-	<key>NSFaceIDUsageDescription</key>
-	<string>Use Face ID to sign in to Agro Hub quickly.</string>
+	<string>Shobuj</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,20 +24,16 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Agro Hub uses the camera so you can photograph plants for listings, posts, and Agri-AI diagnosis.</string>
+	<string>Shobuj uses the camera so you can photograph plants for listings, posts, and Agri-AI diagnosis.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Use Face ID to sign in to Shobuj quickly.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Agro Hub accesses your photos so you can attach pictures to listings, posts, messages, and your profile.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>remote-notification</string>
-	</array>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Shobuj uses your location to show you plant listings and swaps nearby.</string>
+	<string>Shobuj accesses your photos so you can attach pictures to listings, posts, messages, and your profile.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -63,6 +57,10 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -70,8 +68,6 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

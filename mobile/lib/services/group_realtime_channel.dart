@@ -6,6 +6,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../config/app_config.dart';
 import '../models/group_message.dart';
+import '../models/message_reaction.dart';
+import '../models/message_reply.dart';
 
 /// A live connection to a single group's real-time chat channel, over
 /// Laravel Reverb — mirrors SwapOfferRealtimeChannel exactly, just scoped to
@@ -15,13 +17,16 @@ import '../models/group_message.dart';
 /// Scoped to one group / one screen lifetime: create, [connect], read
 /// events via [onMessage], then [dispose] when the chat screen closes.
 class GroupRealtimeChannel {
-  GroupRealtimeChannel({required Dio dio, required this.groupId})
-    : _dio = dio;
+  GroupRealtimeChannel({required Dio dio, required this.groupId}) : _dio = dio;
 
   final Dio _dio;
   final int groupId;
 
   void Function(GroupMessage message)? onMessage;
+
+  /// Someone else changed a message's reactions — carries that message's
+  /// full new reaction list.
+  void Function(int messageId, List<MessageReaction> reactions)? onReactions;
   void Function(Object error)? onError;
 
   WebSocketChannel? _channel;
@@ -112,6 +117,14 @@ class GroupRealtimeChannel {
         onError?.call(data?['message'] ?? 'Realtime connection error');
       case 'message.sent':
         if (data != null) onMessage?.call(GroupMessage.fromJson(data));
+      case 'message.reacted':
+        final messageId = parseOptionalId(data?['message_id']);
+        if (messageId != null) {
+          onReactions?.call(
+            messageId,
+            MessageReaction.listFromJson(data?['reactions']),
+          );
+        }
     }
   }
 

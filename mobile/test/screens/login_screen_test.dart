@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:shobuj_mobile/models/geo_point.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
 import 'package:shobuj_mobile/providers/location_providers.dart';
 import 'package:shobuj_mobile/screens/auth/login_screen.dart';
@@ -11,18 +11,7 @@ import 'package:shobuj_mobile/services/api_exception.dart';
 import '../support/fake_api_client.dart';
 import '../support/fake_secure_storage_service.dart';
 
-final _fakePosition = Position(
-  latitude: 23.780636,
-  longitude: 90.279785,
-  timestamp: DateTime(2026, 1, 1),
-  accuracy: 5,
-  altitude: 0,
-  altitudeAccuracy: 0,
-  heading: 0,
-  headingAccuracy: 0,
-  speed: 0,
-  speedAccuracy: 0,
-);
+const _fakeLocation = GeoPoint(latitude: 53.8173, longitude: -1.5776);
 
 void main() {
   Future<void> pumpLoginScreen(
@@ -123,7 +112,7 @@ void main() {
             secureStorageProvider.overrideWithValue(FakeSecureStorageService()),
             // RegisterScreen's location indicator has an indefinite spinner while
             // loading, which would otherwise never let pumpAndSettle() finish.
-            deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+            accountLocationProvider.overrideWith((ref) async => _fakeLocation),
           ],
           child: const MaterialApp(home: LoginScreen()),
         ),

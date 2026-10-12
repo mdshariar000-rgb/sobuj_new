@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'enums.dart';
 import 'geo_point.dart';
+import 'uk_address.dart';
 
 /// Named AppUser (not User) to avoid clashing with other packages' own User
 /// types (auth SDKs commonly export one).
@@ -20,6 +21,10 @@ class AppUser {
     this.avatarUrl,
     this.coverPhotoUrl,
     this.locationLabel,
+    this.address,
+    this.needsAddress = false,
+    this.hasPassword = true,
+    this.signedInWith = const [],
     this.growingInterests = const [],
     this.showHandoverRadius,
     this.experienceLevel,
@@ -28,6 +33,12 @@ class AppUser {
     this.location,
     this.postsCount,
     this.activeListingsCount,
+    this.followersCount,
+    this.followingCount,
+    this.isFollowing,
+    this.sellerRating,
+    this.sellerReviewsCount,
+    this.completedDealsCount,
     required this.createdAt,
   });
 
@@ -54,6 +65,20 @@ class AppUser {
   /// never derived from their real coordinates, which stay fuzzed/private.
   final String? locationLabel;
 
+  /// Only on the signed-in user's own record — never other people's.
+  final UkAddress? address;
+
+  /// An account made before the address was required — AuthGate asks for
+  /// it before anything else.
+  final bool needsAddress;
+
+  /// False for an account made with Google/Apple that never set a
+  /// password — deleting it confirms with that provider instead.
+  final bool hasPassword;
+
+  /// "google" / "apple" — linked sign-in providers (own record only).
+  final List<String> signedInWith;
+
   /// A short personal list the user manages themselves — not a moderated or
   /// searchable tag catalog.
   final List<String> growingInterests;
@@ -73,6 +98,23 @@ class AppUser {
   final int? postsCount;
   final int? activeListingsCount;
 
+  /// Follow-graph counts — present on GET/PATCH /auth/me, GET /users/{id},
+  /// and the follow/unfollow response. See FollowController on the backend.
+  final int? followersCount;
+  final int? followingCount;
+
+  /// Whether the signed-in caller currently follows this user. Only
+  /// meaningful (non-null) when viewing someone else's profile — never set
+  /// on the caller's own record.
+  final bool? isFollowing;
+
+  /// Trust signals, only on GET /users/{id} (UserController::show()): the
+  /// average rating buyers gave this grower's listings (null with no
+  /// reviews), how many reviews that is, and how many deals they completed.
+  final double? sellerRating;
+  final int? sellerReviewsCount;
+  final int? completedDealsCount;
+
   final DateTime createdAt;
 
   AppUser copyWith({
@@ -83,12 +125,17 @@ class AppUser {
     String? avatarUrl,
     String? coverPhotoUrl,
     String? locationLabel,
+    UkAddress? address,
+    bool? needsAddress,
     List<String>? growingInterests,
     bool? showHandoverRadius,
     ExperienceLevel? experienceLevel,
     GrowingSetup? growingSetup,
     int? postsCount,
     int? activeListingsCount,
+    int? followersCount,
+    int? followingCount,
+    bool? isFollowing,
   }) {
     return AppUser(
       id: id,
@@ -103,14 +150,24 @@ class AppUser {
       avatarUrl: avatarUrl ?? this.avatarUrl,
       coverPhotoUrl: coverPhotoUrl ?? this.coverPhotoUrl,
       locationLabel: locationLabel ?? this.locationLabel,
+      address: address ?? this.address,
+      needsAddress: needsAddress ?? this.needsAddress,
+      hasPassword: hasPassword,
+      signedInWith: signedInWith,
       growingInterests: growingInterests ?? this.growingInterests,
       showHandoverRadius: showHandoverRadius ?? this.showHandoverRadius,
       experienceLevel: experienceLevel ?? this.experienceLevel,
       growingSetup: growingSetup ?? this.growingSetup,
+      followersCount: followersCount ?? this.followersCount,
+      followingCount: followingCount ?? this.followingCount,
+      isFollowing: isFollowing ?? this.isFollowing,
       ratingAvg: ratingAvg,
       location: location,
       postsCount: postsCount ?? this.postsCount,
       activeListingsCount: activeListingsCount ?? this.activeListingsCount,
+      sellerRating: sellerRating,
+      sellerReviewsCount: sellerReviewsCount,
+      completedDealsCount: completedDealsCount,
       createdAt: createdAt,
     );
   }
@@ -129,6 +186,14 @@ class AppUser {
       avatarUrl: json['avatar_url'] as String?,
       coverPhotoUrl: json['cover_photo_url'] as String?,
       locationLabel: json['location_label'] as String?,
+      address: UkAddress.tryFromJson(json['address']),
+      needsAddress: json['needs_address'] as bool? ?? false,
+      hasPassword: json['has_password'] as bool? ?? true,
+      signedInWith:
+          (json['signed_in_with'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
       growingInterests:
           (json['growing_interests'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -145,6 +210,12 @@ class AppUser {
       location: GeoPoint.tryFromJson(json['location']),
       postsCount: json['posts_count'] as int?,
       activeListingsCount: json['active_listings_count'] as int?,
+      followersCount: json['followers_count'] as int?,
+      followingCount: json['following_count'] as int?,
+      isFollowing: json['is_following'] as bool?,
+      sellerRating: (json['seller_rating'] as num?)?.toDouble(),
+      sellerReviewsCount: json['seller_reviews_count'] as int?,
+      completedDealsCount: json['completed_deals_count'] as int?,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }

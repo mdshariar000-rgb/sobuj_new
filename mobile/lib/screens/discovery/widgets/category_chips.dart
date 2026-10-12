@@ -10,19 +10,19 @@ import '../../../theme/app_colors.dart';
 /// Anything that doesn't match falls back to a generic marketplace icon.
 IconData categoryIcon(String? category) {
   final normalized = category?.toLowerCase() ?? '';
-  if (normalized.contains('seed')) return Icons.grain;
-  if (normalized.contains('plant')) return Icons.local_florist_outlined;
-  if (normalized.contains('fertiliz')) return Icons.science_outlined;
+  if (normalized.contains('seed')) return Icons.spa;
+  if (normalized.contains('plant')) return Icons.yard;
+  if (normalized.contains('fertili')) return Icons.science;
   if (normalized.contains('tool') || normalized.contains('equipment')) {
-    return Icons.handyman_outlined;
+    return Icons.construction;
   }
   if (normalized.contains('harvest') || normalized.contains('produce')) {
-    return Icons.agriculture_outlined;
+    return Icons.shopping_basket;
   }
   if (normalized.contains('compost') || normalized.contains('soil')) {
-    return Icons.compost_outlined;
+    return Icons.eco;
   }
-  return Icons.category_outlined;
+  return Icons.eco_outlined;
 }
 
 class CategoryChips extends ConsumerWidget {

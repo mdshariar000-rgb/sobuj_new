@@ -21,10 +21,22 @@ import 'create_group_post_screen.dart';
 import 'group_chat_screen.dart';
 import 'group_join_requests_screen.dart';
 import 'group_settings_screen.dart';
+import '../../widgets/image_decode.dart';
+import '../../widgets/shimmer.dart';
 
 const _months = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
 ];
 
 /// A group's own page: header (cover/name/description/member count), real
@@ -124,6 +136,11 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen>
             pinned: true,
             backgroundColor: AppColors.forestDark,
             foregroundColor: Colors.white,
+            // The theme's title style carries its own dark color, which beats
+            // foregroundColor — set white explicitly for this dark bar.
+            titleTextStyle: Theme.of(
+              context,
+            ).appBarTheme.titleTextStyle?.copyWith(color: Colors.white),
             titleSpacing: _isSearching ? 0 : null,
             title: _isSearching
                 ? TextField(
@@ -166,7 +183,8 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen>
                       ),
                       if (group.membersCount != null)
                         Text(
-                          '${_compactCount(group.membersCount!)} members',
+                          '${_compactCount(group.membersCount!)} '
+                          '${group.membersCount == 1 ? 'member' : 'members'}',
                           style: const TextStyle(
                             color: AppColors.textOnDarkMuted,
                             fontSize: 12,
@@ -216,11 +234,8 @@ class _GroupDetailScreenState extends ConsumerState<GroupDetailScreen>
                 ),
             ],
           ),
-          if (group.myRoleIsAdmin &&
-              (group.pendingJoinRequestsCount ?? 0) > 0)
-            SliverToBoxAdapter(
-              child: _PendingRequestsBanner(group: group),
-            ),
+          if (group.myRoleIsAdmin && (group.pendingJoinRequestsCount ?? 0) > 0)
+            SliverToBoxAdapter(child: _PendingRequestsBanner(group: group)),
           SliverToBoxAdapter(
             child: _GroupHeader(
               group: group,
@@ -303,7 +318,11 @@ class _PendingRequestsBanner extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(
           children: [
-            const Icon(Icons.person_add_alt, color: AppColors.primary, size: 18),
+            const Icon(
+              Icons.person_add_alt,
+              color: AppColors.primary,
+              size: 18,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -345,6 +364,7 @@ class _GroupHeader extends StatelessWidget {
                 imageUrl: group.coverImageUrl!,
                 width: double.infinity,
                 height: 176,
+                memCacheWidth: decodeWidthFor(context, double.infinity),
                 fit: BoxFit.cover,
               ),
               if (group.category != null)
@@ -482,7 +502,7 @@ class _GroupHeader extends StatelessWidget {
                       onPressed: () => SharePlus.instance.share(
                         ShareParams(
                           text:
-                              'Join "${group.name}" on Agro Hub — '
+                              'Join "${group.name}" on Shobuj — '
                               '${group.membersCount ?? 0} growers so far.',
                         ),
                       ),
@@ -505,7 +525,9 @@ class _GroupHeader extends StatelessWidget {
                       backgroundColor: AppColors.mintButton,
                       foregroundColor: AppColors.mintButtonText,
                       icon: Icons.chat_bubble_outline,
-                      label: 'Group Chat',
+                      // "Group Chat" truncated to "Group C…" in a third of a
+                      // phone's width.
+                      label: 'Chat',
                     ),
                   ),
                 ],
@@ -563,9 +585,7 @@ class _PillButton extends StatelessWidget {
         foregroundColor: foregroundColor,
         disabledBackgroundColor: backgroundColor.withValues(alpha: 0.5),
         disabledForegroundColor: foregroundColor.withValues(alpha: 0.5),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
       ),
       child: child,
@@ -604,12 +624,11 @@ class _AllPostsTab extends ConsumerWidget {
       showEditPostSheet(
         context,
         post: post,
-        onSubmit: (ref, body, category, image, removeImage) => ref
+        onSubmit: (ref, body, image, removeImage) => ref
             .read(groupPostsProvider(group.id).notifier)
             .updatePost(
               post.id,
               body: body,
-              category: category,
               image: image,
               removeImage: removeImage,
             ),
@@ -622,9 +641,10 @@ class _AllPostsTab extends ConsumerWidget {
     }
 
     return RefreshIndicator(
-      onRefresh: () => ref.read(groupPostsProvider(group.id).notifier).refresh(),
+      onRefresh: () =>
+          ref.read(groupPostsProvider(group.id).notifier).refresh(),
       child: postsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const ShimmerPostList(),
         error: (error, _) => Center(child: Text('$error')),
         data: (state) {
           final query = searchQuery.toLowerCase();
@@ -695,6 +715,7 @@ class _AllPostsTab extends ConsumerWidget {
                 for (final post in posts)
                   PostCard(
                     post: post,
+                    showGroupLabel: false,
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => PostDetailScreen(post: post),
@@ -754,7 +775,7 @@ class _MediaTab extends ConsumerWidget {
     final postsAsync = ref.watch(groupPostsProvider(groupId));
 
     return postsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const ShimmerPostList(),
       error: (error, _) => Center(child: Text('$error')),
       data: (state) {
         final withPhotos = state.posts
@@ -784,6 +805,11 @@ class _MediaTab extends ConsumerWidget {
               ),
               child: CachedNetworkImage(
                 imageUrl: post.imageUrl!,
+                // A third of the screen — the grid is 3 columns.
+                memCacheWidth: decodeWidthFor(
+                  context,
+                  MediaQuery.sizeOf(context).width / 3,
+                ),
                 fit: BoxFit.cover,
               ),
             );
@@ -804,7 +830,7 @@ class _MembersTab extends ConsumerWidget {
     final membersAsync = ref.watch(groupMembersProvider(groupId));
 
     return membersAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const ShimmerCardList(thumbSize: 44, roundThumb: true),
       error: (error, _) => Center(child: Text('$error')),
       data: (members) {
         if (members.isEmpty) {
@@ -825,7 +851,10 @@ class _MembersTab extends ConsumerWidget {
                 : member.growingSetup?.label ?? member.experienceLevel?.label;
             return ListTile(
               onTap: () => openUserProfile(context, member.id),
-              leading: UserAvatar(name: member.name, avatarUrl: member.avatarUrl),
+              leading: UserAvatar(
+                name: member.name,
+                avatarUrl: member.avatarUrl,
+              ),
               title: Row(
                 children: [
                   Flexible(
@@ -833,11 +862,17 @@ class _MembersTab extends ConsumerWidget {
                   ),
                   if (member.isVerified) ...[
                     const SizedBox(width: 4),
-                    const Icon(Icons.verified, size: 14, color: AppColors.primary),
+                    const Icon(
+                      Icons.verified,
+                      size: 14,
+                      color: AppColors.primary,
+                    ),
                   ],
                 ],
               ),
-              subtitle: member.username != null ? Text('@${member.username}') : null,
+              subtitle: member.username != null
+                  ? Text('@${member.username}')
+                  : null,
               trailing: roleLabel != null
                   ? Container(
                       padding: const EdgeInsets.symmetric(

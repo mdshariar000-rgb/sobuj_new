@@ -25,7 +25,7 @@ class MarketplaceTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Wanted: Heavy Duty Broadfork',
-            'listing_type' => 'Live Plants & Saplings',
+            'listing_type' => 'Live plants',
             'transaction_type' => 'wanted',
             'looking_for' => 'A sturdy broadfork or U-bar digger, used is fine.',
             'latitude' => 23.780636,
@@ -43,7 +43,7 @@ class MarketplaceTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Wanted: Heavy Duty Broadfork',
-            'listing_type' => 'Live Plants & Saplings',
+            'listing_type' => 'Live plants',
             'transaction_type' => 'wanted',
             'price' => 85,
             'latitude' => 23.780636,
@@ -160,7 +160,7 @@ class MarketplaceTest extends TestCase
 
         $response = $this->postJson('/api/v1/listings', [
             'title' => 'Meyer Lemon Rootstock',
-            'listing_type' => 'Live Plants & Saplings',
+            'listing_type' => 'Live plants',
             'transaction_type' => 'swap',
             'description' => 'Healthy rootstock, grown from seed two years ago.',
             'condition' => 'new_fresh',
@@ -175,6 +175,85 @@ class MarketplaceTest extends TestCase
         $response->assertJsonPath('data.condition', 'new_fresh');
         $response->assertJsonPath('data.condition_label', 'New / Fresh');
         $response->assertJsonPath('data.handover_note', 'Pickup only, weekday evenings.');
+    }
+
+    public function test_a_sell_listing_can_be_created_with_quantity_and_contact(): void
+    {
+        Sanctum::actingAs(User::factory()->create());
+
+        $response = $this->postJson('/api/v1/listings', [
+            'title' => 'Beefsteak Tomato Seeds',
+            'description' => 'Heirloom seeds, good germination.',
+            'listing_type' => 'Live plants',
+            'transaction_type' => 'sell',
+            'price' => 1.55,
+            'quantity' => 10,
+            'contact' => '07700 900123',
+            'latitude' => 23.780636,
+            'longitude' => 90.279785,
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.quantity', 10);
+        $response->assertJsonPath('data.contact', '07700 900123');
+        $this->assertDatabaseHas('listings', ['title' => 'Beefsteak Tomato Seeds', 'quantity' => 10]);
+    }
+
+    public function test_a_listings_contact_is_only_shown_to_its_seller(): void
+    {
+        $seller = User::factory()->create();
+        Sanctum::actingAs($seller);
+
+        $listingId = $this->postJson('/api/v1/listings', [
+            'title' => 'Beefsteak Tomato Seeds',
+            'listing_type' => 'Live plants',
+            'transaction_type' => 'sell',
+            'price' => 1.55,
+            'quantity' => 10,
+            'contact' => 'seller@example.com',
+            'latitude' => 23.780636,
+            'longitude' => 90.279785,
+        ])->json('data.id');
+
+        $this->getJson("/api/v1/listings/{$listingId}")
+            ->assertJsonPath('data.contact', 'seller@example.com');
+
+        Sanctum::actingAs(User::factory()->create());
+
+        $this->getJson("/api/v1/listings/{$listingId}")
+            ->assertOk()
+            ->assertJsonPath('data.quantity', 10)
+            ->assertJsonMissingPath('data.contact');
+    }
+
+    public function test_a_listing_without_quantity_or_contact_still_works_for_older_apps(): void
+    {
+        Sanctum::actingAs(User::factory()->create());
+
+        $response = $this->postJson('/api/v1/listings', [
+            'title' => 'Rare Orchid',
+            'listing_type' => 'Live plants',
+            'transaction_type' => 'sell',
+            'price' => 25,
+            'latitude' => 23.780636,
+            'longitude' => 90.279785,
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('data.quantity', null);
+    }
+
+    public function test_quantity_must_be_a_positive_whole_number(): void
+    {
+        Sanctum::actingAs(User::factory()->create());
+
+        $this->postJson('/api/v1/listings', [
+            'title' => 'Rare Orchid',
+            'listing_type' => 'Live plants',
+            'transaction_type' => 'sell',
+            'price' => 25,
+            'quantity' => 0,
+        ])->assertJsonValidationErrors('quantity');
     }
 
     public function test_a_users_public_profile_exposes_only_safe_fields_and_their_active_listings(): void

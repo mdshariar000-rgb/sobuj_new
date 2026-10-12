@@ -68,7 +68,9 @@ void main() {
 
     expect(find.text('Compost Workshop'), findsOneWidget);
     expect(find.text('Seed Swap'), findsOneWidget);
-    expect(find.text("You're Going"), findsOneWidget);
+    expect(find.text("You're going"), findsOneWidget);
+    // UK date order.
+    expect(find.text('Mon 1 Jun · 6:00 pm'), findsNWidgets(2));
   });
 
   testWidgets('shows an empty state when there are no upcoming events', (
@@ -84,7 +86,7 @@ void main() {
   ) async {
     await _pumpEventsScreen(tester, FakeApiClient());
 
-    await tester.tap(find.text('Host an Event'));
+    await tester.tap(find.byKey(const Key('host-event-button')));
     await tester.pumpAndSettle();
 
     expect(find.text('Event Title *'), findsOneWidget);
@@ -105,4 +107,63 @@ void main() {
       expect(find.text('Events Calendar'), findsOneWidget);
     },
   );
+
+  testWidgets('search goes to the server', (tester) async {
+    final fakeClient = FakeApiClient();
+    await _pumpEventsScreen(tester, fakeClient);
+
+    await tester.enterText(
+      find.byKey(const Key('events-search-field')),
+      'compost',
+    );
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.lastEventsSearch, 'compost');
+    expect(find.text('No events found'), findsOneWidget);
+  });
+
+  testWidgets('My events lists going, hosting, saved and drafts', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()
+      ..goingEventsResult = [_buildEvent(id: 1, title: 'Seed Swap')]
+      ..hostingEventsResult = [_buildEvent(id: 2, title: 'My Workshop')]
+      ..myDraftsResult = [
+        Event(
+          id: 12,
+          title: 'Half-planned Walk',
+          format: EventFormat.inPerson,
+          startsAt: DateTime(2026, 7, 1, 10),
+          status: EventStatus.draft,
+          createdAt: DateTime(2026, 1, 1),
+        ),
+      ];
+    await _pumpEventsScreen(tester, fakeClient);
+
+    await tester.tap(find.byKey(const Key('events-tab-mine')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Going (1)'), findsOneWidget);
+    expect(find.text('Seed Swap'), findsOneWidget);
+    expect(find.text('Hosting (1)'), findsOneWidget);
+    expect(find.text('My Workshop'), findsOneWidget);
+    await tester.dragUntilVisible(
+      find.text('Tap the bookmark on an event to keep it here.'),
+      find.byType(ListView).last,
+      const Offset(0, -150),
+    );
+    await tester.dragUntilVisible(
+      find.text('Half-planned Walk'),
+      find.byType(ListView).last,
+      const Offset(0, -150),
+    );
+
+    // A draft opens in the editor. (Scroll it clear of the + button.)
+    await tester.drag(find.byType(ListView).last, const Offset(0, -300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Half-planned Walk'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit Event'), findsOneWidget);
+  });
 }

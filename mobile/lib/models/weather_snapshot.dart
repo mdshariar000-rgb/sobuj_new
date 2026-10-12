@@ -23,7 +23,8 @@ class WeatherSnapshot {
     return WeatherSnapshot(
       temperatureC: (current['temperature_2m'] as num).toDouble(),
       humidityPercent: (current['relative_humidity_2m'] as num).toDouble(),
-      rainfallTodayMm: (precipitationSums != null && precipitationSums.isNotEmpty)
+      rainfallTodayMm:
+          (precipitationSums != null && precipitationSums.isNotEmpty)
           ? precipitationSums.first.toDouble()
           : 0,
     );

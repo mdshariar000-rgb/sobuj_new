@@ -37,6 +37,11 @@ class StoreListingRequest extends FormRequest
                 'max:99999.99',
             ],
 
+            // Nullable so older app builds (which never send them) keep working;
+            // the current app requires both on "sell" listings.
+            'quantity' => ['nullable', 'integer', 'min:1', 'max:100000'],
+            'contact' => ['nullable', 'string', 'max:255'],
+
             'looking_for' => ['nullable', 'string', 'max:1000'],
             'handover_note' => ['nullable', 'string', 'max:500'],
 

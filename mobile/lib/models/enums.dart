@@ -1,6 +1,6 @@
 /// Mirrors App\Enums\TransactionType on the backend.
 enum TransactionType {
-  swap('swap', 'Trade'),
+  swap('swap', 'Swap'),
   free('free', 'Free'),
   sell('sell', 'For Sale'),
   swapOrCash('swap_or_cash', 'Swap or Cash'),
@@ -95,7 +95,8 @@ enum GrowingSetup {
   backyard('backyard', 'Backyard'),
   rooftop('rooftop', 'Rooftop'),
   communityGarden('community_garden', 'Community Garden'),
-  greenhouse('greenhouse', 'Greenhouse');
+  greenhouse('greenhouse', 'Greenhouse'),
+  allotment('allotment', 'Allotment');
 
   const GrowingSetup(this.value, this.label);
 

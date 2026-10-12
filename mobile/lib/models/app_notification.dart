@@ -21,8 +21,9 @@ class AppNotification {
   final int id;
 
   /// One of: post_liked, post_commented, comment_replied,
-  /// swap_message_received, group_message_received — see
-  /// App\Enums\NotificationType on the backend.
+  /// swap_message_received, group_message_received, user_followed,
+  /// listing_reviewed, post_shared, swap_offer_received, swap_offer_updated —
+  /// see App\Enums\NotificationType on the backend.
   final String type;
   final String title;
   final String body;

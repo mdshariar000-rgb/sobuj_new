@@ -1,7 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Required for the Discovery map/nearby search to know the device's position. -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- For the "Sign in with Face ID / Fingerprint" quick-unlock option on Login. -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
@@ -11,7 +9,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
-        android:label="shobuj_mobile"
+        android:label="Shobuj"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <!--

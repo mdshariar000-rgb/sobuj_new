@@ -8,12 +8,16 @@ import '../models/app_user.dart';
 import '../models/enums.dart';
 import '../models/listing.dart';
 import '../models/listing_category.dart';
+import '../models/listing_review.dart';
+import '../models/message_reaction.dart';
+import '../models/message_reply.dart';
 import '../models/swap_message.dart';
 import '../models/swap_offer.dart';
 import '../services/api_client.dart';
 import '../services/swap_offer_realtime_channel.dart';
 import 'auth_providers.dart';
 import 'core_providers.dart';
+import 'feed_marketplace_providers.dart';
 import 'location_providers.dart';
 
 enum DiscoveryViewMode { list, map }
@@ -105,6 +109,10 @@ class DiscoveryFiltersNotifier extends StateNotifier<DiscoveryFilters> {
       state = state.copyWith(radiusKm: radiusKm);
 
   void setSort(DiscoverySort sort) => state = state.copyWith(sort: sort);
+
+  /// Applies a whole set of filters at once — the Filters sheet edits a
+  /// draft copy and only commits it on "Apply Filters".
+  void apply(DiscoveryFilters filters) => state = filters;
 }
 
 final discoveryFiltersProvider =
@@ -120,7 +128,7 @@ final viewModeProvider = StateProvider<DiscoveryViewMode>(
 /// means no pin is selected (or we're in list view).
 final selectedListingIdProvider = StateProvider<int?>((ref) => null);
 
-/// Re-fetches whenever filters or the device location change. autoDispose so
+/// Re-fetches whenever filters or the account location change. autoDispose so
 /// the (potentially large) result list isn't kept around once the Discovery
 /// screen is popped.
 class NearbyListingsNotifier extends StateNotifier<AsyncValue<List<Listing>>> {
@@ -134,7 +142,7 @@ class NearbyListingsNotifier extends StateNotifier<AsyncValue<List<Listing>>> {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       final filters = _ref.read(discoveryFiltersProvider);
-      final position = await _ref.read(deviceLocationProvider.future);
+      final position = await _ref.read(accountLocationProvider.future);
       final apiClient = _ref.read(apiClientProvider);
 
       final response = await apiClient.nearbyListings(
@@ -216,9 +224,7 @@ class SavedListingsNotifier extends StateNotifier<AsyncValue<List<Listing>>> {
     final current = state.valueOrNull;
     if (current == null) return;
 
-    state = AsyncValue.data(
-      current.where((l) => l.id != listing.id).toList(),
-    );
+    state = AsyncValue.data(current.where((l) => l.id != listing.id).toList());
 
     final apiClient = _ref.read(apiClientProvider);
     try {
@@ -297,7 +303,11 @@ class SwapOfferMessagesNotifier
   /// swaps it for the server-confirmed message once the request resolves —
   /// or removes it and rethrows on failure, letting the screen's existing
   /// error handling show what went wrong.
-  Future<void> sendMessage({String? body, File? image}) async {
+  Future<void> sendMessage({
+    String? body,
+    List<File> images = const [],
+    MessageReply? replyTo,
+  }) async {
     final me = _ref.read(authControllerProvider).valueOrNull;
     final tempId = _nextTempId--;
     final optimistic = SwapMessage(
@@ -308,7 +318,9 @@ class SwapOfferMessagesNotifier
       sender: me,
       createdAt: DateTime.now(),
       isPending: true,
-      localImage: image,
+      localImages: images,
+      replyToId: replyTo?.id,
+      replyTo: replyTo,
     );
     _append(optimistic);
 
@@ -316,7 +328,8 @@ class SwapOfferMessagesNotifier
       final message = await _apiClient.sendSwapOfferMessage(
         _swapOfferId,
         body: body,
-        image: image,
+        images: images,
+        replyToId: replyTo?.id,
       );
       _replace(tempId, message);
     } catch (_) {
@@ -325,10 +338,66 @@ class SwapOfferMessagesNotifier
     }
   }
 
+  /// Sets or clears the signed-in user's reaction to [emoji] (tapping
+  /// their current one removes it): updates the bubble straight away, then
+  /// settles on the server's answer — or rolls back and rethrows.
+  Future<void> react(int messageId, String emoji) async {
+    final me = _ref.read(authControllerProvider).valueOrNull?.id;
+    final message = state.valueOrNull
+        ?.where((m) => m.id == messageId)
+        .firstOrNull;
+    if (me == null || message == null || message.isPending) return;
+
+    final before = message.reactions;
+    final removing = myReaction(before, me) == emoji;
+    applyReactions(messageId, toggleReaction(before, userId: me, emoji: emoji));
+    try {
+      final reactions = await _apiClient.setSwapOfferMessageReaction(
+        _swapOfferId,
+        messageId,
+        removing ? null : emoji,
+      );
+      applyReactions(messageId, reactions);
+    } catch (_) {
+      applyReactions(messageId, before);
+      rethrow;
+    }
+  }
+
+  /// Replaces one message's reactions — also how a realtime
+  /// `message.reacted` update from someone else lands.
+  void applyReactions(int messageId, List<MessageReaction> reactions) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    state = AsyncValue.data([
+      for (final m in current)
+        if (m.id == messageId) m.withReactions(reactions) else m,
+    ]);
+  }
+
   /// Adds a message that arrived over the realtime channel — de-duplicated
   /// by id, since the sender's own optimistic [sendMessage] add can race
   /// with its own broadcast echo.
-  void receiveMessage(SwapMessage message) => _append(message);
+  /// A realtime push. The server can echo the user's own message back
+  /// before their send request returns — it then takes the place of the
+  /// matching "Sending…" bubble, so the message never shows twice.
+  void receiveMessage(SwapMessage message) {
+    final current = state.valueOrNull ?? [];
+    final me = _ref.read(authControllerProvider).valueOrNull?.id;
+    final pendingIndex = message.sender?.id == me
+        ? current.indexWhere(
+            (m) =>
+                m.isPending &&
+                m.body == message.body &&
+                m.localImages.length == message.imageUrls.length,
+          )
+        : -1;
+    if (pendingIndex < 0 || current.any((m) => m.id == message.id)) {
+      _append(message);
+      return;
+    }
+    state = AsyncValue.data([...current]..[pendingIndex] = message);
+  }
 
   void _append(SwapMessage message) {
     final current = state.valueOrNull ?? [];
@@ -345,10 +414,7 @@ class SwapOfferMessagesNotifier
     final alreadyDelivered = current.any((m) => m.id == message.id);
     state = AsyncValue.data([
       for (final m in current)
-        if (m.id != tempId)
-          m
-        else if (!alreadyDelivered)
-          message,
+        if (m.id != tempId) m else if (!alreadyDelivered) message,
     ]);
   }
 
@@ -383,19 +449,151 @@ final swapOfferRealtimeChannelProvider =
       );
     });
 
-/// A grower's public profile — "View Seller Profile" on a listing detail.
-final userProfileProvider = FutureProvider.autoDispose.family<AppUser, int>((
-  ref,
-  userId,
-) async {
-  final apiClient = ref.watch(apiClientProvider);
-  return apiClient.userProfile(userId);
-});
+/// A grower's public profile — "View Seller Profile" on a listing detail (or
+/// anywhere else `openUserProfile` is used). A StateNotifier rather than a
+/// plain FutureProvider so the Follow button can toggle optimistically, same
+/// pattern as NearbyListingsNotifier.toggleSaved().
+class UserProfileNotifier extends StateNotifier<AsyncValue<AppUser>> {
+  UserProfileNotifier(this._ref, this._userId)
+    : super(const AsyncValue.loading()) {
+    refresh();
+  }
+
+  final Ref _ref;
+  final int _userId;
+
+  Future<void> refresh() async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      final apiClient = _ref.read(apiClientProvider);
+      return apiClient.userProfile(_userId);
+    });
+  }
+
+  /// Toggles optimistically, then reconciles with the server's fresh counts;
+  /// rolls back on failure. Real follow/unfollow — see FollowController.
+  Future<void> toggleFollow() async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+
+    final wasFollowing = current.isFollowing ?? false;
+    state = AsyncValue.data(
+      current.copyWith(
+        isFollowing: !wasFollowing,
+        followersCount: (current.followersCount ?? 0) + (wasFollowing ? -1 : 1),
+      ),
+    );
+
+    final apiClient = _ref.read(apiClientProvider);
+    try {
+      final updated = wasFollowing
+          ? await apiClient.unfollowUser(_userId)
+          : await apiClient.followUser(_userId);
+      // Only the follow fields: the follow response leaves out the profile's
+      // other counts and trust signals, which haven't changed.
+      state = AsyncValue.data(
+        current.copyWith(
+          isFollowing: updated.isFollowing,
+          followersCount: updated.followersCount,
+          followingCount: updated.followingCount,
+        ),
+      );
+      // Home's "Picked for you" includes new listings from followed
+      // growers — refetch it so this shows up without a pull-to-refresh.
+      if (_ref.exists(feedMarketplaceProvider)) {
+        _ref.invalidate(feedMarketplaceProvider);
+      }
+    } catch (_) {
+      state = AsyncValue.data(current);
+      rethrow;
+    }
+  }
+}
+
+final userProfileProvider = StateNotifierProvider.autoDispose
+    .family<UserProfileNotifier, AsyncValue<AppUser>, int>((ref, userId) {
+      return UserProfileNotifier(ref, userId);
+    });
 
 /// That grower's active listings, shown below their profile.
 final userListingsProvider = FutureProvider.autoDispose
     .family<List<Listing>, int>((ref, userId) async {
       final apiClient = ref.watch(apiClientProvider);
       final response = await apiClient.userListings(userId);
+      return response.data;
+    });
+
+/// A single listing's reviews (star rating + comment), keyed by listing id
+/// — same shape as PostCommentsNotifier (first page only, no infinite
+/// scroll; review lists are short).
+class ListingReviewsNotifier
+    extends StateNotifier<AsyncValue<List<ListingReview>>> {
+  ListingReviewsNotifier(this._apiClient, this._listingId)
+    : super(const AsyncValue.loading()) {
+    refresh();
+  }
+
+  final ApiClient _apiClient;
+  final int _listingId;
+
+  Future<void> refresh() async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      final response = await _apiClient.listingReviews(_listingId);
+      return response.data;
+    });
+  }
+
+  /// Idempotent upsert — matches ListingReviewController::store() on the
+  /// backend: submitting again replaces the caller's existing review in
+  /// this list rather than adding a second one.
+  Future<void> submitReview({required int rating, String? comment}) async {
+    final review = await _apiClient.submitListingReview(
+      _listingId,
+      rating: rating,
+      comment: comment,
+    );
+    final current = state.valueOrNull ?? [];
+    final existingIndex = current.indexWhere(
+      (r) => r.reviewer?.id != null && r.reviewer?.id == review.reviewer?.id,
+    );
+    state = AsyncValue.data(
+      existingIndex == -1
+          ? [review, ...current]
+          : [
+              for (var i = 0; i < current.length; i++)
+                i == existingIndex ? review : current[i],
+            ],
+    );
+  }
+
+  Future<void> deleteReview(int reviewId) async {
+    await _apiClient.deleteListingReview(_listingId, reviewId);
+    final current = state.valueOrNull ?? [];
+    state = AsyncValue.data(
+      current.where((review) => review.id != reviewId).toList(),
+    );
+  }
+}
+
+final listingReviewsProvider = StateNotifierProvider.autoDispose
+    .family<ListingReviewsNotifier, AsyncValue<List<ListingReview>>, int>(
+      (ref, listingId) =>
+          ListingReviewsNotifier(ref.watch(apiClientProvider), listingId),
+    );
+
+/// That grower's followers / who they follow — the "Followers" and
+/// "Following" counts on their profile, each opening a simple list screen.
+final userFollowersProvider = FutureProvider.autoDispose
+    .family<List<AppUser>, int>((ref, userId) async {
+      final apiClient = ref.watch(apiClientProvider);
+      final response = await apiClient.userFollowers(userId);
+      return response.data;
+    });
+
+final userFollowingProvider = FutureProvider.autoDispose
+    .family<List<AppUser>, int>((ref, userId) async {
+      final apiClient = ref.watch(apiClientProvider);
+      final response = await apiClient.userFollowing(userId);
       return response.data;
     });

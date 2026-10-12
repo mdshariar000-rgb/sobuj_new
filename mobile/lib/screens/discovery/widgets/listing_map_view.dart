@@ -27,7 +27,7 @@ class _ListingMapViewState extends ConsumerState<ListingMapView> {
   @override
   Widget build(BuildContext context) {
     final listingsAsync = ref.watch(nearbyListingsProvider);
-    final positionAsync = ref.watch(deviceLocationProvider);
+    final positionAsync = ref.watch(accountLocationProvider);
 
     if (positionAsync.isLoading || listingsAsync.isLoading) {
       return const Center(child: CircularProgressIndicator());
@@ -38,7 +38,7 @@ class _ListingMapViewState extends ConsumerState<ListingMapView> {
       return DiscoveryErrorView(
         error: error,
         onRetry: () {
-          ref.invalidate(deviceLocationProvider);
+          ref.invalidate(accountLocationProvider);
           ref.invalidate(nearbyListingsProvider);
         },
       );
@@ -79,8 +79,6 @@ class _ListingMapViewState extends ConsumerState<ListingMapView> {
             zoom: 13,
           ),
           markers: markers,
-          myLocationEnabled: true,
-          myLocationButtonEnabled: true,
           onMapCreated: (controller) => _controller = controller,
           onTap: (_) =>
               ref.read(selectedListingIdProvider.notifier).state = null,

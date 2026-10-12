@@ -6,6 +6,7 @@ import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
+import '../../widgets/shimmer.dart';
 
 /// Everyone the signed-in user has blocked, each with an Unblock button.
 class BlockedUsersScreen extends ConsumerWidget {
@@ -21,9 +22,15 @@ class BlockedUsersScreen extends ConsumerWidget {
         title: const Text('Blocked users'),
         backgroundColor: AppColors.forestDark,
         foregroundColor: Colors.white,
+        // The theme's title style carries its own dark color, which beats
+        // foregroundColor — set white explicitly for this dark bar.
+        titleTextStyle: Theme.of(
+          context,
+        ).appBarTheme.titleTextStyle?.copyWith(color: Colors.white),
       ),
       body: blocked.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () =>
+            const ShimmerCardList(thumbSize: 40, roundThumb: true, lines: 1),
         error: (error, _) => Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -68,7 +75,9 @@ class BlockedUsersScreen extends ConsumerWidget {
                 key: Key('blocked-user-${user.id}'),
                 leading: UserAvatar(name: user.name, avatarUrl: user.avatarUrl),
                 title: Text(user.name),
-                subtitle: user.username != null ? Text('@${user.username}') : null,
+                subtitle: user.username != null
+                    ? Text('@${user.username}')
+                    : null,
                 trailing: TextButton(
                   key: Key('unblock-${user.id}'),
                   onPressed: () async {
@@ -79,7 +88,9 @@ class BlockedUsersScreen extends ConsumerWidget {
                         SnackBar(content: Text('Unblocked ${user.name}.')),
                       );
                     } on ApiException catch (e) {
-                      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+                      messenger.showSnackBar(
+                        SnackBar(content: Text(e.message)),
+                      );
                     }
                   },
                   child: const Text('Unblock'),

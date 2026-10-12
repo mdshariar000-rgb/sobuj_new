@@ -19,8 +19,10 @@ class ComingSoonView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Scrollable so it never clips when shown in a short space (e.g. under
+    // a tall header on a small phone).
     return Center(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(
           mainAxisSize: MainAxisSize.min,

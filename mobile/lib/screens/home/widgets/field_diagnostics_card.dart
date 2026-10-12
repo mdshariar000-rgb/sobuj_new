@@ -45,7 +45,7 @@ class FieldDiagnosticsCard extends ConsumerWidget {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  'FIELD DIAGNOSTICS',
+                  'WEATHER IN YOUR AREA',
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.4,
@@ -133,7 +133,8 @@ class FieldDiagnosticsCard extends ConsumerWidget {
                       child: _MetricTile(
                         icon: Icons.water_drop_outlined,
                         label: 'Rainfall Today',
-                        value: '${weather.rainfallTodayMm.toStringAsFixed(1)} mm',
+                        value:
+                            '${weather.rainfallTodayMm.toStringAsFixed(1)} mm',
                       ),
                     ),
                   ],
@@ -181,7 +182,11 @@ class _StatusPill extends StatelessWidget {
         AppColors.mint,
         AppColors.forestDark,
       ),
-      AsyncError() => ('Unavailable', AppColors.surfaceMuted, AppColors.textMuted),
+      AsyncError() => (
+        'Unavailable',
+        AppColors.surfaceMuted,
+        AppColors.textMuted,
+      ),
       _ => ('Loading…', AppColors.surfaceMuted, AppColors.textMuted),
     };
 

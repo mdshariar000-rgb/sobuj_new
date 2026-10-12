@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../models/app_notification.dart';
 import '../../services/api_client.dart';
+import '../discovery/listing_detail_screen.dart';
+import '../discovery/seller_profile_screen.dart';
 import '../discovery/swap_offer_thread_screen.dart';
 import '../groups/group_chat_screen.dart';
 import '../home/post_detail_screen.dart';
@@ -25,7 +27,12 @@ Future<bool> openNotificationDeepLink(
   ApiClient apiClient,
   AppNotification notification,
 ) {
-  return _openDeepLink(context, apiClient, notification.type, notification.data);
+  return _openDeepLink(
+    context,
+    apiClient,
+    notification.type,
+    notification.data,
+  );
 }
 
 Future<bool> openNotificationDataDeepLink(
@@ -48,17 +55,20 @@ Future<bool> _openDeepLink(
     switch (type) {
       case 'post_liked':
       case 'post_commented':
+      case 'post_shared':
       case 'comment_replied':
         final postId = _parseId(data?['post_id']);
         if (postId == null) return false;
         final post = await apiClient.post(postId);
         if (!context.mounted) return false;
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => PostDetailScreen(post: post)),
-        );
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => PostDetailScreen(post: post)));
         return true;
 
       case 'swap_message_received':
+      case 'swap_offer_received':
+      case 'swap_offer_updated':
         final swapOfferId = _parseId(data?['swap_offer_id']);
         if (swapOfferId == null) return false;
         final swapOffer = await apiClient.swapOffer(swapOfferId);
@@ -75,9 +85,31 @@ Future<bool> _openDeepLink(
         if (groupId == null) return false;
         final group = await apiClient.group(groupId);
         if (!context.mounted) return false;
-        Navigator.of(
-          context,
-        ).push(MaterialPageRoute(builder: (_) => GroupChatScreen(group: group)));
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => GroupChatScreen(group: group)),
+        );
+        return true;
+
+      case 'user_followed':
+        final userId = _parseId(data?['user_id']);
+        if (userId == null) return false;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SellerProfileScreen(userId: userId),
+          ),
+        );
+        return true;
+
+      case 'listing_reviewed':
+        final listingId = _parseId(data?['listing_id']);
+        if (listingId == null) return false;
+        final listing = await apiClient.listing(listingId);
+        if (!context.mounted) return false;
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ListingDetailScreen(listing: listing),
+          ),
+        );
         return true;
 
       default:

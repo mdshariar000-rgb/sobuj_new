@@ -13,7 +13,7 @@ class TermsScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'What you share on Agro Hub',
+              'What you share on Shobuj',
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
             ),
             SizedBox(height: 8),
@@ -36,15 +36,13 @@ class TermsScreen extends StatelessWidget {
             ),
             SizedBox(height: 20),
             Text(
-              'Photos and the Agri-AI Assistant',
+              'Photos',
               style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
             ),
             SizedBox(height: 8),
             Text(
-              'A leaf photo you send to the Agri-AI Assistant is sent to '
-              "Google's Gemini API for analysis so the assistant can "
-              'respond. Photos you attach to a post are stored to display '
-              'that post.',
+              'Photos you attach to a post, listing, event or message are '
+              'stored to display it.',
             ),
             SizedBox(height: 20),
             Text(
@@ -53,7 +51,7 @@ class TermsScreen extends StatelessWidget {
             ),
             SizedBox(height: 8),
             Text(
-              'Agro Hub has zero tolerance for objectionable content or '
+              'Shobuj has zero tolerance for objectionable content or '
               'abusive users. Do not post anything hateful, harassing, '
               'sexually explicit, violent, misleading, spam, or illegal — '
               'including banned or invasive plant species.',
@@ -70,16 +68,6 @@ class TermsScreen extends StatelessWidget {
               'long-pressing a message. We review reports promptly — aiming '
               'for within 24 hours — and remove content or suspend accounts '
               'that break these terms.',
-            ),
-            SizedBox(height: 20),
-            Text(
-              'The Agri-AI Assistant',
-              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Answers are AI-generated general guidance and can be wrong. '
-              'They are not professional agronomic advice.',
             ),
             SizedBox(height: 24),
             Text(

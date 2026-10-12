@@ -4,7 +4,6 @@ namespace App\Models;
 
 use App\Enums\PostApprovalStatus;
 use App\Enums\PostModerationStatus;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -21,12 +20,18 @@ class Post extends Model
     use HasFactory;
 
     /**
+     * What PostResource needs loaded to render a post in full.
+     */
+    public const RESOURCE_RELATIONS = ['author', 'group'];
+
+    public const RESOURCE_COUNTS = ['comments', 'likedBy as likes_count'];
+
+    /**
      * @var list<string>
      */
     protected $fillable = [
         'group_id',
         'body',
-        'category',
         'image_path',
     ];
 
@@ -55,7 +60,7 @@ class Post extends Model
     }
 
     /**
-     * Null when this is a general Home Feed post rather than a group post.
+     * Every post belongs to a group — there's no personal timeline.
      *
      * @return BelongsTo<Group, Post>
      */
@@ -78,13 +83,5 @@ class Post extends Model
     public function likedBy(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'post_likes')->withPivot('created_at');
-    }
-
-    /**
-     * General Home Feed posts — not scoped to any group.
-     */
-    public function scopeGeneralFeed(Builder $query): Builder
-    {
-        return $query->whereNull('group_id');
     }
 }

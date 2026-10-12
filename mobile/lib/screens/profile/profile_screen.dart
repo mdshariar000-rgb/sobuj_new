@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../config/app_config.dart';
 import '../../models/app_user.dart';
 import '../../models/enums.dart';
 import '../../models/listing.dart';
@@ -15,17 +16,20 @@ import '../../providers/shell_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/listing_detail_screen.dart';
+import '../discovery/widgets/listing_owner_actions.dart';
+import '../discovery/user_list_screen.dart';
 import '../home/widgets/edit_post_sheet.dart';
 import '../home/widgets/post_card.dart';
 import 'edit_profile_screen.dart';
-import 'manage_subscription_screen.dart';
 import 'privacy_safety_screen.dart';
+import '../../widgets/image_decode.dart';
+import '../../widgets/shimmer.dart';
 
 /// The Profile tab: the signed-in user's own details, posts, and listings.
-/// Every field is real — see AppUser/UserResource; there is no Connections
-/// count, Story button, or "Saved Diagnoses" tab, since none of those exist
-/// on the backend (no follower graph, no Stories feature, no AI-diagnosis
-/// save flow).
+/// Every field is real — see AppUser/UserResource; there is no Story button
+/// or "Saved Diagnoses" tab, since neither exists on the backend (no
+/// Stories feature, no AI-diagnosis save flow). Followers/Following counts
+/// are real — see FollowController — and each opens the matching list.
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
 
@@ -64,6 +68,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen>
             pinned: true,
             backgroundColor: AppColors.forestDark,
             foregroundColor: Colors.white,
+            // The theme's title style carries its own dark color, which beats
+            // foregroundColor — set white explicitly for this dark bar.
+            titleTextStyle: Theme.of(
+              context,
+            ).appBarTheme.titleTextStyle?.copyWith(color: Colors.white),
             title: const Text('Profile'),
             actions: [
               IconButton(
@@ -134,9 +143,9 @@ class _ProfileHeader extends ConsumerWidget {
 
   final AppUser user;
 
-  void _editProfile(BuildContext context) => Navigator.of(context).push(
-    MaterialPageRoute(builder: (_) => const EditProfileScreen()),
-  );
+  void _editProfile(BuildContext context) => Navigator.of(
+    context,
+  ).push(MaterialPageRoute(builder: (_) => const EditProfileScreen()));
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -155,6 +164,7 @@ class _ProfileHeader extends ConsumerWidget {
               child: user.coverPhotoUrl != null
                   ? CachedNetworkImage(
                       imageUrl: user.coverPhotoUrl!,
+                      memCacheWidth: decodeWidthFor(context, double.infinity),
                       fit: BoxFit.cover,
                       errorWidget: (_, _, _) => const SizedBox.shrink(),
                     )
@@ -297,6 +307,8 @@ class _ProfileHeader extends ConsumerWidget {
                 ),
               if (user.postsCount != null ||
                   user.activeListingsCount != null ||
+                  user.followersCount != null ||
+                  user.followingCount != null ||
                   (user.locationLabel?.isNotEmpty ?? false))
                 Container(
                   margin: const EdgeInsets.only(top: 12),
@@ -330,6 +342,43 @@ class _ProfileHeader extends ConsumerWidget {
                                 label: 'Active Listings',
                               ),
                           ],
+                        ),
+                      if (user.followersCount != null ||
+                          user.followingCount != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Row(
+                            children: [
+                              _TappableStatInline(
+                                value: user.followersCount ?? 0,
+                                label: 'Followers',
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => UserListScreen(
+                                      title: 'Followers',
+                                      provider: userFollowersProvider(user.id),
+                                      emptyMessage: 'No followers yet.',
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 20),
+                              _TappableStatInline(
+                                value: user.followingCount ?? 0,
+                                label: 'Following',
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => UserListScreen(
+                                      title: 'Following',
+                                      provider: userFollowingProvider(user.id),
+                                      emptyMessage:
+                                          "You aren't following anyone yet.",
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       if (user.locationLabel != null &&
                           user.locationLabel!.isNotEmpty)
@@ -375,11 +424,12 @@ class _ProfileHeader extends ConsumerWidget {
                     child: FilledButton.tonalIcon(
                       onPressed: () {
                         final buffer = StringBuffer(
-                          '${user.name} is on Agro Hub',
+                          '${user.name} is on Shobuj',
                         );
                         if (user.username != null) {
                           buffer.write(' (@${user.username})');
                         }
+                        buffer.write('\n${AppConfig.profileShareUrl(user.id)}');
                         SharePlus.instance.share(
                           ShareParams(text: buffer.toString()),
                         );
@@ -395,7 +445,13 @@ class _ProfileHeader extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              const _ManageSubscriptionRow(),
+              const _ProfileLinkRow(
+                key: Key('privacy-safety-row'),
+                icon: Icons.shield_outlined,
+                label: 'Privacy & Safety',
+                subtitle: 'Blocked users, privacy policy, terms',
+                destination: PrivacySafetyScreen(),
+              ),
             ],
           ),
         ),
@@ -405,16 +461,30 @@ class _ProfileHeader extends ConsumerWidget {
   }
 }
 
-class _ManageSubscriptionRow extends StatelessWidget {
-  const _ManageSubscriptionRow();
+/// A tappable card row on the Profile page that opens [destination] — so
+/// settings like Privacy & Safety (where blocked
+/// users are managed) are visible, not only behind an app-bar icon.
+class _ProfileLinkRow extends StatelessWidget {
+  const _ProfileLinkRow({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.destination,
+    this.subtitle,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? subtitle;
+  final Widget destination;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(14),
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const ManageSubscriptionScreen()),
-      ),
+      onTap: () => Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => destination)),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
@@ -432,17 +502,29 @@ class _ManageSubscriptionRow extends StatelessWidget {
                 color: AppColors.mint,
                 shape: BoxShape.circle,
               ),
-              child: const Icon(
-                Icons.spa,
-                size: 16,
-                color: AppColors.forestDark,
-              ),
+              child: Icon(icon, size: 16, color: AppColors.forestDark),
             ),
             const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Manage Subscription',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (subtitle != null)
+                    Text(
+                      subtitle!,
+                      style: const TextStyle(
+                        color: AppColors.textMuted,
+                        fontSize: 11,
+                      ),
+                    ),
+                ],
               ),
             ),
             const Icon(
@@ -529,6 +611,46 @@ class _StatInline extends StatelessWidget {
   }
 }
 
+/// Same shape as [_StatInline], but tappable — for Followers/Following,
+/// which (unlike Posts/Active Listings) each open a real list screen.
+class _TappableStatInline extends StatelessWidget {
+  const _TappableStatInline({
+    required this.value,
+    required this.label,
+    required this.onTap,
+  });
+
+  final int value;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$value',
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              color: AppColors.textDark,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(color: AppColors.label, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MyPostsTab extends ConsumerWidget {
   const _MyPostsTab({required this.userId});
 
@@ -538,19 +660,22 @@ class _MyPostsTab extends ConsumerWidget {
     showEditPostSheet(
       context,
       post: post,
-      onSubmit: (ref, body, category, image, removeImage) => ref
+      onSubmit: (ref, body, image, removeImage) => ref
           .read(authorPostsProvider(userId).notifier)
           .updatePost(
             post.id,
             body: body,
-            category: category,
             image: image,
             removeImage: removeImage,
           ),
     );
   }
 
-  Future<void> _deletePost(BuildContext context, WidgetRef ref, int postId) async {
+  Future<void> _deletePost(
+    BuildContext context,
+    WidgetRef ref,
+    int postId,
+  ) async {
     if (!await confirmDeletePost(context) || !context.mounted) return;
     await ref.read(authorPostsProvider(userId).notifier).deletePost(postId);
   }
@@ -560,39 +685,48 @@ class _MyPostsTab extends ConsumerWidget {
     final postsAsync = ref.watch(authorPostsProvider(userId));
 
     return postsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const ShimmerPostList(),
       error: (error, _) => Center(child: Text('$error')),
       data: (posts) {
         return RefreshIndicator(
-          onRefresh: () => ref.read(authorPostsProvider(userId).notifier).refresh(),
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: posts.length + 1,
-            itemBuilder: (context, index) {
-              if (index == 0) {
-                return _GroupsPromptCard(
-                  onTap: () {
-                    ref.read(selectedTabIndexProvider.notifier).state = 1;
-                    Navigator.of(context).popUntil((route) => route.isFirst);
+          onRefresh: () =>
+              ref.read(authorPostsProvider(userId).notifier).refresh(),
+          // Every post they've written — general ones and the ones in their
+          // groups (each card says which group). Only an empty list gets the
+          // nudge toward Groups, where posting happens.
+          child: posts.isEmpty
+              ? ListView(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  children: [
+                    const _EmptyTabState(
+                      icon: Icons.article_outlined,
+                      message: "You haven't posted anything yet.",
+                    ),
+                    _GroupsPromptCard(
+                      onTap: () {
+                        ref.read(selectedTabIndexProvider.notifier).state = 1;
+                        Navigator.of(
+                          context,
+                        ).popUntil((route) => route.isFirst);
+                      },
+                    ),
+                  ],
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: posts.length,
+                  itemBuilder: (context, index) {
+                    final post = posts[index];
+                    return PostCard(
+                      post: post,
+                      onEdit: () => _editPost(context, ref, post),
+                      onDelete: () => _deletePost(context, ref, post.id),
+                      onLike: () => ref
+                          .read(authorPostsProvider(userId).notifier)
+                          .toggleLike(post),
+                    );
                   },
-                );
-              }
-              if (posts.isEmpty && index == 1) {
-                return const _EmptyTabState(
-                  icon: Icons.article_outlined,
-                  message: "You haven't posted anything yet.",
-                );
-              }
-              final post = posts[index - 1];
-              return PostCard(
-                post: post,
-                onEdit: () => _editPost(context, ref, post),
-                onDelete: () => _deletePost(context, ref, post.id),
-                onLike: () =>
-                    ref.read(authorPostsProvider(userId).notifier).toggleLike(post),
-              );
-            },
-          ),
+                ),
         );
       },
     );
@@ -616,8 +750,10 @@ class _GroupsPromptCard extends StatelessWidget {
       elevation: 0,
       child: ListTile(
         leading: const Icon(Icons.groups_outlined, color: AppColors.primary),
-        title: const Text('Looking for more?'),
-        subtitle: const Text('See posts from the groups you have joined.'),
+        title: const Text('Post in a group'),
+        subtitle: const Text(
+          'Posts are shared inside groups — open Groups to write one.',
+        ),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
@@ -633,9 +769,12 @@ class _MyListingsTab extends ConsumerWidget {
     final listingsAsync = ref.watch(myListingsProvider);
 
     return listingsAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const ShimmerCardList(thumbSize: 64, lines: 3),
       error: (error, _) => Center(child: Text('$error')),
-      data: (listings) {
+      data: (all) {
+        final listings = all
+            .where((listing) => listing.status != ListingStatus.deleted)
+            .toList();
         if (listings.isEmpty) {
           return const _EmptyTabState(
             icon: Icons.storefront_outlined,
@@ -651,11 +790,12 @@ class _MyListingsTab extends ConsumerWidget {
               final listing = listings[index];
               return _MyListingRow(
                 listing: listing,
-                onManage: () => Navigator.of(context).push(
+                onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(
                     builder: (_) => ListingDetailScreen(listing: listing),
                   ),
                 ),
+                onManage: () => _showManageSheet(context, ref, listing),
               );
             },
           ),
@@ -665,10 +805,85 @@ class _MyListingsTab extends ConsumerWidget {
   }
 }
 
+/// Manage one of your own listings: view it, edit it, mark it sold (or put
+/// it back on sale), or delete it.
+void _showManageSheet(BuildContext context, WidgetRef ref, Listing listing) {
+  final isSoldOut = listing.status == ListingStatus.completed;
+  final noun = listing.transactionType == TransactionType.swap
+      ? 'swapped'
+      : 'sold';
+  showModalBottomSheet<void>(
+    context: context,
+    showDragHandle: true,
+    builder: (sheetContext) {
+      void close() => Navigator.of(sheetContext).pop();
+      return SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.visibility_outlined),
+              title: const Text('View listing'),
+              onTap: () {
+                close();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ListingDetailScreen(listing: listing),
+                  ),
+                );
+              },
+            ),
+            ListTile(
+              key: const Key('manage-edit'),
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit'),
+              subtitle: const Text('Price, quantity, photos, description'),
+              onTap: () {
+                close();
+                editOwnListing(context, listing);
+              },
+            ),
+            ListTile(
+              key: const Key('manage-toggle-sold'),
+              leading: Icon(
+                isSoldOut ? Icons.replay : Icons.check_circle_outline,
+              ),
+              title: Text(
+                isSoldOut ? 'Put back on the marketplace' : 'Mark as $noun',
+              ),
+              onTap: () {
+                close();
+                toggleOwnListingSold(context, ref, listing);
+              },
+            ),
+            ListTile(
+              key: const Key('manage-delete'),
+              leading: const Icon(Icons.delete_outline, color: AppColors.error),
+              title: const Text(
+                'Delete',
+                style: TextStyle(color: AppColors.error),
+              ),
+              onTap: () {
+                close();
+                deleteOwnListing(context, ref, listing);
+              },
+            ),
+          ],
+        ),
+      );
+    },
+  );
+}
+
 class _MyListingRow extends StatelessWidget {
-  const _MyListingRow({required this.listing, required this.onManage});
+  const _MyListingRow({
+    required this.listing,
+    required this.onTap,
+    required this.onManage,
+  });
 
   final Listing listing;
+  final VoidCallback onTap;
   final VoidCallback onManage;
 
   Color _statusColor() {
@@ -688,90 +903,110 @@ class _MyListingRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: SizedBox(
-                width: 64,
-                height: 64,
-                child: listing.thumbnailUrl != null
-                    ? Image.network(listing.thumbnailUrl!, fit: BoxFit.cover)
-                    : Container(
-                        color: AppColors.surfaceMuted,
-                        child: const Icon(
-                          Icons.eco_outlined,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    listing.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: _statusColor().withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          listing.status.label,
-                          style: TextStyle(
-                            color: _statusColor(),
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: 64,
+                  height: 64,
+                  child: listing.thumbnailUrl != null
+                      ? CachedNetworkImage(
+                          imageUrl: listing.thumbnailUrl!,
+                          memCacheWidth: decodeWidthFor(context, 64),
+                          fit: BoxFit.cover,
+                        )
+                      : Container(
+                          color: AppColors.surfaceMuted,
+                          child: const Icon(
+                            Icons.eco_outlined,
+                            color: AppColors.textMuted,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      if (listing.price != null)
-                        Text(
-                          NumberFormat.simpleCurrency().format(listing.price),
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.visibility_outlined,
-                        size: 14,
-                        color: AppColors.textMuted,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${listing.viewsCount} views',
-                        style: const TextStyle(
-                          color: AppColors.textMuted,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-            OutlinedButton(onPressed: onManage, child: const Text('Manage')),
-          ],
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      listing.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: _statusColor().withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            listing.status.label,
+                            style: TextStyle(
+                              color: _statusColor(),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        if (listing.price != null)
+                          Text(
+                            NumberFormat.simpleCurrency(
+                              name: 'GBP',
+                            ).format(listing.price),
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.visibility_outlined,
+                          size: 14,
+                          color: AppColors.textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          [
+                            '${listing.viewsCount} views',
+                            if (listing.quantity != null)
+                              '${listing.quantity} left',
+                          ].join(' · '),
+                          style: const TextStyle(
+                            color: AppColors.textMuted,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton(
+                onPressed: onManage,
+                // The theme's buttons are full width — that can't lay out
+                // inside this Row and blanked the whole My Listings tab.
+                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 40)),
+                child: const Text('Manage'),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -5,7 +5,6 @@ import 'package:shobuj_mobile/models/comment.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/models/post.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
-import 'package:shobuj_mobile/providers/post_providers.dart';
 import 'package:shobuj_mobile/screens/home/post_detail_screen.dart';
 
 import '../support/fake_api_client.dart';
@@ -88,7 +87,7 @@ void main() {
     (tester) async {
       final post = _buildPost();
       final fakeClient = FakeApiClient()
-        ..homeFeedResult = PaginatedResponse(
+        ..userPostsResult = PaginatedResponse(
           data: [post],
           currentPage: 1,
           lastPage: 1,
@@ -108,12 +107,7 @@ void main() {
           createdAt: DateTime.now(),
         );
 
-      final container = await _pumpPostDetail(tester, fakeClient, post);
-      // Seed the Home Feed provider too, as if we navigated in from there —
-      // autoDispose providers reset without an active listener, so `listen`
-      // (not a one-off `read`) is what keeps this instance alive across the
-      // rest of the test, matching how a real widget watching it would.
-      container.listen(homeFeedProvider, (previous, next) {});
+      await _pumpPostDetail(tester, fakeClient, post);
       await tester.pumpAndSettle();
 
       expect(find.text('0 comments'), findsOneWidget);
@@ -122,11 +116,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.send));
       await tester.pumpAndSettle();
 
-      expect(find.text('1 comments'), findsOneWidget);
-      expect(
-        container.read(homeFeedProvider).valueOrNull?.posts.first.commentsCount,
-        1,
-      );
+      expect(find.text('1 comment'), findsOneWidget);
     },
   );
 
@@ -206,11 +196,16 @@ void main() {
 
       await _pumpPostDetail(tester, fakeClient, post);
 
-      final controller = tester.widget<ListView>(find.byType(ListView)).controller!;
+      final controller = tester
+          .widget<ListView>(find.byType(ListView))
+          .controller!;
       // 20 comments plus the post itself overflow a phone-sized viewport —
       // starting scrolled at the top (reading the post first, unlike a
       // chat), so there's real room below to scroll into.
-      expect(controller.position.pixels, lessThan(controller.position.maxScrollExtent));
+      expect(
+        controller.position.pixels,
+        lessThan(controller.position.maxScrollExtent),
+      );
 
       await tester.tap(find.byType(TextField));
       await tester.pumpAndSettle();
@@ -259,7 +254,11 @@ void main() {
   testWidgets(
     "a comment's author can delete their own comment even on someone else's post",
     (tester) async {
-      final post = _buildPost(authorId: 2, authorName: 'Rina', commentsCount: 1);
+      final post = _buildPost(
+        authorId: 2,
+        authorName: 'Rina',
+        commentsCount: 1,
+      );
       final fakeClient = FakeApiClient()
         ..postCommentsResult = PaginatedResponse(
           data: [

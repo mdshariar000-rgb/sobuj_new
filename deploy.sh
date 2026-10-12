@@ -29,7 +29,8 @@ cd "$(dirname "$0")"
 [ -d backend ] || { echo "Run this from the repo root (backend/ not found)." >&2; exit 1; }
 
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15)
-ssh_run() { ssh "${SSH_OPTS[@]}" "$REMOTE" "$@"; }
+# -n: none of these read stdin, so leave it for the migration prompt below.
+ssh_run() { ssh -n "${SSH_OPTS[@]}" "$REMOTE" "$@"; }
 
 echo "==> Checking SSH access to $REMOTE"
 if ! ssh_run "echo ok" >/dev/null 2>&1; then
@@ -76,6 +77,20 @@ echo "==> Uploading and extracting"
 scp "${SSH_OPTS[@]}" -q "$TARBALL" "$REMOTE:/home/codecell/tmp/agrohub-deploy.tar.gz"
 ssh_run "cd $APP_DIR && tar --warning=no-timestamp -xzf /home/codecell/tmp/agrohub-deploy.tar.gz --strip-components=1 && rm -f /home/codecell/tmp/agrohub-deploy.tar.gz && rm -rf storage/framework/testing"
 
+echo "==> Checking for leftover files"
+# Extracting over the old tree never removes files deleted locally, and
+# Filament auto-discovers anything left under app/Filament (a removed admin
+# page stays in the panel). Report them; moving them out is a manual step.
+STALE="$(LC_ALL=C comm -13 \
+  <(tar -tzf "$TARBALL" | sed -n 's#^backend/##p' | grep -E '^(app|config|routes|resources|database)/.*[^/]$' | LC_ALL=C sort) \
+  <(ssh_run "cd $APP_DIR && find app config routes resources database -type f" | LC_ALL=C sort))"
+if [ -n "$STALE" ]; then
+  echo "    On the server but not in this deploy (move them out of $APP_DIR):"
+  echo "$STALE" | sed 's/^/      /'
+else
+  echo "    none"
+fi
+
 echo "==> Installing dependencies"
 ssh_run "cd $APP_DIR && php8.3 /usr/local/bin/composer install --no-dev --optimize-autoloader --no-interaction 2>&1 | tail -3"
 
@@ -98,10 +113,13 @@ echo "==> Rebuilding caches and purging Varnish"
 ssh_run "cd $APP_DIR && php8.3 artisan optimize:clear >/dev/null && php8.3 artisan config:cache >/dev/null && php8.3 artisan route:cache >/dev/null && php8.3 artisan view:cache >/dev/null && php8.3 artisan event:cache >/dev/null && sudo /usr/bin/clpctlWrapper varnish-cache:purge --purge=all 2>&1 | tail -1"
 
 echo "==> Smoke test"
-for path in /up /privacy /api/v1/config/stripe-key; do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "$SITE_URL$path" || true)"
+# path:expected-status — the API check expects 401 (signed out), which
+# proves Laravel booted and the API routes answer without needing a login.
+for check in /up:200 /privacy:200 /api/v1/auth/me:401; do
+  path="${check%%:*}"; want="${check##*:}"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -H 'Accept: application/json' "$SITE_URL$path" || true)"
   echo "    $path -> $code"
-  [ "$code" = "200" ] || { echo "Unexpected status for $path — check storage/logs/laravel.log on the server." >&2; exit 1; }
+  [ "$code" = "$want" ] || { echo "Unexpected status for $path (wanted $want) — check storage/logs/laravel.log on the server." >&2; exit 1; }
 done
 
 echo "Deployed."

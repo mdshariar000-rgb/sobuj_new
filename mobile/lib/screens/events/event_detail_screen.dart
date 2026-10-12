@@ -11,10 +11,16 @@ import '../../models/event_enums.dart';
 import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/event_providers.dart';
+import '../../providers/core_providers.dart';
+import '../../services/api_exception.dart';
+import '../groups/group_chat_screen.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/seller_profile_screen.dart';
+import 'create_event_screen.dart';
+import 'widgets/event_reviews_section.dart';
+import '../../widgets/image_decode.dart';
 
 IconData _formatIcon(EventFormat format) {
   switch (format) {
@@ -39,6 +45,24 @@ class EventDetailScreen extends ConsumerStatefulWidget {
 class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
   bool _isRsvping = false;
   bool _isTogglingSaved = false;
+  bool _isOpeningChat = false;
+
+  Future<void> _onChatTapped(Event event, bool canChat) async {
+    if (!canChat) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('RSVP as going to join this event’s chat.'),
+        ),
+      );
+      return;
+    }
+    setState(() => _isOpeningChat = true);
+    try {
+      await openEventChat(context, ref, event);
+    } finally {
+      if (mounted) setState(() => _isOpeningChat = false);
+    }
+  }
 
   Future<void> _rsvp(EventAttendeeStatus status) async {
     setState(() => _isRsvping = true);
@@ -46,9 +70,7 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
       await ref.read(eventDetailProvider(widget.event).notifier).rsvp(status);
       if (mounted && status == EventAttendeeStatus.going) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Spot reserved! You’re on the list.'),
-          ),
+          const SnackBar(content: Text('Spot reserved! You’re on the list.')),
         );
       }
     } finally {
@@ -80,8 +102,18 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
     }
   }
 
+  /// Opens the event in the editor, then reloads it so the changes show.
+  Future<void> _edit(Event event) async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => CreateEventScreen(event: event)));
+    if (!mounted) return;
+    ref.read(eventDetailProvider(widget.event).notifier).refresh();
+    ref.invalidate(hostingEventsProvider);
+  }
+
   void _share(Event event) {
-    final dateFormat = DateFormat('EEE, MMM d · h:mm a');
+    final dateFormat = DateFormat('EEE d MMM · h:mm a');
     final lines = [
       event.title,
       dateFormat.format(event.startsAt),
@@ -138,9 +170,9 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
               children: [
                 Text(
                   'Growers Attending · $totalCount',
-                  style: Theme.of(
-                    context,
-                  ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 ConstrainedBox(
@@ -173,11 +205,16 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
     final theme = Theme.of(context);
     final eventAsync = ref.watch(eventDetailProvider(widget.event));
     final event = eventAsync.valueOrNull ?? widget.event;
-    final dateFormat = DateFormat('EEEE, MMM d, y · h:mm a');
+    final dateFormat = DateFormat('EEEE d MMMM y · h:mm a');
     final isSaved = event.isSaved ?? false;
     final capacity = event.capacity;
     final attendeesCount = event.attendeesCount ?? 0;
     final spotsRemaining = capacity != null ? capacity - attendeesCount : null;
+    final hasChat = event.id > 0 && event.status == EventStatus.published;
+    final isHost =
+        event.host != null &&
+        event.host!.id == ref.watch(authControllerProvider).valueOrNull?.id;
+    final canChat = event.myRsvpStatus == EventAttendeeStatus.going || isHost;
 
     return Scaffold(
       backgroundColor: AppColors.surface,
@@ -186,10 +223,7 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
           ListView(
             padding: EdgeInsets.zero,
             children: [
-              _HeroSection(
-                event: event,
-                spotsRemaining: spotsRemaining,
-              ),
+              _HeroSection(event: event, spotsRemaining: spotsRemaining),
               Transform.translate(
                 offset: const Offset(0, -20),
                 child: Container(
@@ -244,6 +278,10 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
                             ? () => _getDirections(event.location!)
                             : null,
                       ),
+                      if (hasChat) ...[
+                        const SizedBox(height: 16),
+                        _EventChatCard(event: event, canChat: canChat),
+                      ],
                       if (event.myRsvpStatus == null)
                         Align(
                           alignment: Alignment.centerRight,
@@ -251,7 +289,9 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
                             onPressed: _isRsvping
                                 ? null
                                 : () => _rsvp(EventAttendeeStatus.interested),
-                            child: const Text('Just interested, not going yet?'),
+                            child: const Text(
+                              'Just interested, not going yet?',
+                            ),
                           ),
                         ),
                       if (event.description != null &&
@@ -290,6 +330,18 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
                           onViewAll: () => _showAllAttendees(event),
                         ),
                       ],
+                      // Not on the create screen's preview (id -1) or a
+                      // draft — only published events take reviews.
+                      if (event.id > 0 &&
+                          event.status == EventStatus.published) ...[
+                        const SizedBox(height: 24),
+                        const _SectionHeading(
+                          icon: Icons.rate_review_outlined,
+                          title: 'Reviews & Comments',
+                        ),
+                        const SizedBox(height: 10),
+                        EventReviewsSection(eventId: event.id),
+                      ],
                     ],
                   ),
                 ),
@@ -309,6 +361,14 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
             top: MediaQuery.of(context).padding.top + 10,
             child: Row(
               children: [
+                if (isHost && event.id > 0) ...[
+                  _HeroIconButton(
+                    key: const Key('event-edit-button'),
+                    icon: Icons.edit_outlined,
+                    onTap: () => _edit(event),
+                  ),
+                  const SizedBox(width: 10),
+                ],
                 _HeroIconButton(
                   icon: Icons.share_outlined,
                   onTap: () => _share(event),
@@ -347,6 +407,8 @@ class _EventDetailScreenState extends ConsumerState<EventDetailScreen> {
               onAddToCalendar: () => _addToCalendar(event),
               onRsvpGoing: () => _rsvp(EventAttendeeStatus.going),
               onCancelRsvp: _cancelRsvp,
+              onChat: hasChat ? () => _onChatTapped(event, canChat) : null,
+              isOpeningChat: _isOpeningChat,
             ),
           ),
         ],
@@ -371,6 +433,7 @@ class _HeroSection extends StatelessWidget {
           if (event.coverImageUrl != null)
             CachedNetworkImage(
               imageUrl: event.coverImageUrl!,
+              memCacheWidth: decodeWidthFor(context, double.infinity),
               fit: BoxFit.cover,
             )
           else
@@ -447,14 +510,20 @@ class _HeroPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: dark ? AppColors.forestDark.withValues(alpha: 0.8) : Colors.white,
+        color: dark
+            ? AppColors.forestDark.withValues(alpha: 0.8)
+            : Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: dark ? Border.all(color: AppColors.mint, width: 1) : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 13, color: dark ? AppColors.mint : AppColors.primary),
+          Icon(
+            icon,
+            size: 13,
+            color: dark ? AppColors.mint : AppColors.primary,
+          ),
           const SizedBox(width: 5),
           Text(
             label,
@@ -535,9 +604,7 @@ class _HostCard extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => SellerProfileScreen(userId: host.id),
-        ),
+        MaterialPageRoute(builder: (_) => SellerProfileScreen(userId: host.id)),
       ),
       child: Container(
         padding: const EdgeInsets.all(14),
@@ -552,7 +619,11 @@ class _HostCard extends StatelessWidget {
             Stack(
               clipBehavior: Clip.none,
               children: [
-                UserAvatar(name: host.name, avatarUrl: host.avatarUrl, radius: 24),
+                UserAvatar(
+                  name: host.name,
+                  avatarUrl: host.avatarUrl,
+                  radius: 24,
+                ),
                 if (isVerified)
                   Positioned(
                     right: -2,
@@ -666,7 +737,55 @@ class _ScheduleCard extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  dateFormat.format(event.startsAt),
+                  [
+                    dateFormat.format(event.startsAt),
+                    if (event.endsAt != null)
+                      DateFormat('h:mm a').format(event.endsAt!),
+                  ].join(' – '),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          if (event.proposedDates.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.only(left: 28),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Also proposed:',
+                    style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                  ),
+                  for (final date in event.proposedDates)
+                    Text(
+                      dateFormat.format(date.toLocal()),
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: AppColors.border),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              const Icon(
+                Icons.confirmation_number_outlined,
+                size: 18,
+                color: AppColors.primary,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  (event.registrationFee ?? 0) > 0
+                      ? 'Registration fee: '
+                            '${NumberFormat.simpleCurrency(name: 'GBP').format(event.registrationFee)}'
+                            ' · paid at the event'
+                      : 'Free event',
+                  key: const Key('event-fee-label'),
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
@@ -686,7 +805,10 @@ class _ScheduleCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(event.location!, style: const TextStyle(height: 1.3)),
+                  child: Text(
+                    event.location!,
+                    style: const TextStyle(height: 1.3),
+                  ),
                 ),
                 if (onGetDirections != null)
                   TextButton.icon(
@@ -826,6 +948,8 @@ class _BottomActionBar extends StatelessWidget {
     required this.onAddToCalendar,
     required this.onRsvpGoing,
     required this.onCancelRsvp,
+    this.onChat,
+    this.isOpeningChat = false,
   });
 
   final Event event;
@@ -833,6 +957,11 @@ class _BottomActionBar extends StatelessWidget {
   final VoidCallback onAddToCalendar;
   final VoidCallback onRsvpGoing;
   final VoidCallback onCancelRsvp;
+
+  /// Opens this event's own chat; null where the event has none (drafts,
+  /// the create screen's preview).
+  final VoidCallback? onChat;
+  final bool isOpeningChat;
 
   @override
   Widget build(BuildContext context) {
@@ -861,7 +990,13 @@ class _BottomActionBar extends StatelessWidget {
                   style: TextStyle(fontSize: 11, color: AppColors.textMuted),
                 ),
                 Text(
-                  myStatus != null ? "You're ${myStatus.label}" : 'Free Admission',
+                  myStatus != null
+                      ? "You're ${myStatus.label}"
+                      : (event.registrationFee ?? 0) > 0
+                      ? NumberFormat.simpleCurrency(
+                          name: 'GBP',
+                        ).format(event.registrationFee)
+                      : 'Free Admission',
                   style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ],
@@ -875,13 +1010,29 @@ class _BottomActionBar extends StatelessWidget {
               foregroundColor: AppColors.textDark,
             ),
           ),
-          const SizedBox(width: 10),
+          if (onChat != null) ...[
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              key: const Key('event-bottom-chat-button'),
+              tooltip: 'Event chat',
+              onPressed: isOpeningChat ? null : onChat,
+              icon: const Icon(Icons.forum_outlined),
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.mint.withValues(alpha: 0.35),
+                foregroundColor: AppColors.primary,
+              ),
+            ),
+          ],
+          const SizedBox(width: 8),
           if (myStatus == null)
             FilledButton(
               onPressed: isBusy ? null : onRsvpGoing,
               style: FilledButton.styleFrom(
                 minimumSize: Size.zero,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 14,
+                ),
               ),
               child: const Text('RSVP / Register'),
             )
@@ -889,6 +1040,104 @@ class _BottomActionBar extends StatelessWidget {
             TextButton(
               onPressed: isBusy ? null : onCancelRsvp,
               child: const Text('Cancel RSVP'),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Opens [event]'s own chat (created server-side on first open). Shared by
+/// the bottom bar's chat button and the Event chat card.
+Future<void> openEventChat(
+  BuildContext context,
+  WidgetRef ref,
+  Event event,
+) async {
+  try {
+    final group = await ref.read(apiClientProvider).eventChat(event.id);
+    if (!context.mounted) return;
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => GroupChatScreen(group: group)));
+  } on ApiException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+}
+
+/// The event's conversation: open it if you're the host or going;
+/// otherwise a note that going is what gets you in.
+class _EventChatCard extends ConsumerStatefulWidget {
+  const _EventChatCard({required this.event, required this.canChat});
+
+  final Event event;
+  final bool canChat;
+
+  @override
+  ConsumerState<_EventChatCard> createState() => _EventChatCardState();
+}
+
+class _EventChatCardState extends ConsumerState<_EventChatCard> {
+  bool _isOpening = false;
+
+  Future<void> _open() async {
+    setState(() => _isOpening = true);
+    try {
+      await openEventChat(context, ref, widget.event);
+    } finally {
+      if (mounted) setState(() => _isOpening = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.mint.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.forum_outlined, color: AppColors.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Event chat',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+                Text(
+                  widget.canChat
+                      ? 'Talk with everyone going.'
+                      : 'RSVP as going to join the conversation.',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (widget.canChat)
+            FilledButton(
+              key: const Key('open-event-chat'),
+              onPressed: _isOpening ? null : _open,
+              // The theme's full-width minimumSize can't lay out in a Row.
+              style: FilledButton.styleFrom(
+                minimumSize: Size.zero,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 12,
+                ),
+              ),
+              child: const Text('Open'),
             ),
         ],
       ),

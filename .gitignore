@@ -5,3 +5,6 @@
 .claude/
 .vscode/
 .idea/
+
+# Scratch copies made by the deploy-*.sh scripts
+.deploy-*/

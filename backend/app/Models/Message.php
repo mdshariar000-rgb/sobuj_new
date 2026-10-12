@@ -3,16 +3,17 @@
 namespace App\Models;
 
 use App\Enums\MessageType;
+use App\Models\Concerns\HasMessageImages;
 use Database\Factories\MessageFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Message extends Model
 {
     /** @use HasFactory<MessageFactory> */
-    use HasFactory;
+    use HasFactory, HasMessageImages;
 
     /**
      * @var list<string>
@@ -23,14 +24,8 @@ class Message extends Model
         'message_type',
         'body',
         'image_path',
+        'reply_to_id',
     ];
-
-    public function imageUrl(): ?string
-    {
-        return $this->image_path !== null
-            ? Storage::disk('public')->url($this->image_path)
-            : null;
-    }
 
     /**
      * @return array<string, string>
@@ -59,5 +54,24 @@ class Message extends Model
     public function sender(): BelongsTo
     {
         return $this->belongsTo(User::class, 'sender_id');
+    }
+
+    /**
+     * The earlier message this one quotes. Null when it isn't a reply, or
+     * when the quoted message has since been deleted.
+     *
+     * @return BelongsTo<Message, Message>
+     */
+    public function replyTo(): BelongsTo
+    {
+        return $this->belongsTo(Message::class, 'reply_to_id');
+    }
+
+    /**
+     * @return HasMany<MessageReaction>
+     */
+    public function reactions(): HasMany
+    {
+        return $this->hasMany(MessageReaction::class, 'message_id');
     }
 }

@@ -46,6 +46,7 @@ class GroupsHeroHeader extends StatelessWidget {
                   avatarUrl: avatarUrl,
                   radius: 18,
                   fallbackColor: AppColors.mint.withValues(alpha: 0.18),
+                  fallbackTextColor: AppColors.mint,
                 ),
               ),
               const SizedBox(width: 10),
@@ -54,12 +55,11 @@ class GroupsHeroHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Agro Hub',
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      'Shobuj',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     Text(
                       'COMMUNITY HUBS',

@@ -7,11 +7,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shobuj_mobile/models/group.dart';
 import 'package:shobuj_mobile/models/group_message.dart';
+import 'package:shobuj_mobile/models/message_reaction.dart';
+import 'package:shobuj_mobile/models/message_reply.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
 import 'package:shobuj_mobile/providers/group_providers.dart';
 import 'package:shobuj_mobile/screens/groups/group_chat_screen.dart';
+import 'package:shobuj_mobile/services/api_exception.dart';
 import 'package:shobuj_mobile/services/group_realtime_channel.dart';
+import 'package:shobuj_mobile/widgets/image_gallery_viewer.dart';
 
 import '../support/fake_api_client.dart';
 import '../support/fake_secure_storage_service.dart';
@@ -26,7 +30,8 @@ class _DelayedSendApiClient extends FakeApiClient {
   Future<GroupMessage> sendGroupMessage(
     int groupId, {
     String? body,
-    File? image,
+    List<File> images = const [],
+    int? replyToId,
   }) {
     lastSentGroupMessageBody = body;
     return _completer.future;
@@ -122,6 +127,49 @@ void main() {
   });
 
   testWidgets(
+    'a multi-photo message shows a grid, and tapping a photo opens them all',
+    (tester) async {
+      final group = _buildGroup(id: 1, name: 'Tomato Growers');
+      final fakeClient = FakeApiClient()
+        ..groupMessagesResult = PaginatedResponse(
+          data: [
+            GroupMessage(
+              id: 1,
+              groupId: 1,
+              body: 'My harvest',
+              imageUrls: [
+                for (var i = 1; i <= 5; i++) 'https://example.com/p$i.jpg',
+              ],
+              sender: buildFakeUser(id: 2, name: 'Elena'),
+              createdAt: DateTime.now(),
+            ),
+          ],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        );
+
+      await _pumpGroupChat(tester, fakeClient, group);
+
+      // Four tiles, the last one saying how many more there are.
+      expect(find.byKey(const Key('chat-image-3')), findsOneWidget);
+      expect(find.byKey(const Key('chat-image-4')), findsNothing);
+      expect(find.text('+1'), findsOneWidget);
+      expect(find.text('My harvest'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('chat-image-1')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ImageGalleryViewer), findsOneWidget);
+      expect(find.text('2 / 5'), findsOneWidget);
+
+      await tester.fling(find.byType(PageView), const Offset(-400, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(find.text('3 / 5'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'opening a chat with more history than fits on screen starts scrolled '
     'to the latest message, not the oldest',
     (tester) async {
@@ -156,6 +204,230 @@ void main() {
       expect(find.text('Message 30'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'swiping a message starts a reply, and sending it quotes the original',
+    (tester) async {
+      final group = _buildGroup(id: 1, name: 'Tomato Growers');
+      final fakeClient = FakeApiClient()
+        ..groupMessagesResult = PaginatedResponse(
+          data: [
+            GroupMessage(
+              id: 1,
+              groupId: 1,
+              body: 'Who has spare seeds?',
+              sender: buildFakeUser(id: 2, name: 'Elena'),
+              createdAt: DateTime.now(),
+            ),
+          ],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        )
+        ..sendGroupMessageResult = GroupMessage(
+          id: 5,
+          groupId: 1,
+          body: 'I do!',
+          sender: buildFakeUser(id: 1, name: 'Me'),
+          replyToId: 1,
+          replyTo: const MessageReply(
+            id: 1,
+            body: 'Who has spare seeds?',
+            senderName: 'Elena',
+          ),
+          createdAt: DateTime.now(),
+        );
+
+      await _pumpGroupChat(tester, fakeClient, group);
+
+      await tester.drag(
+        find.byKey(const Key('message-bubble-1')),
+        const Offset(120, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('reply-composer-bar')), findsOneWidget);
+      expect(find.text('Replying to Elena'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'I do!');
+      await tester.tap(find.byIcon(Icons.send));
+      await tester.pumpAndSettle();
+
+      expect(fakeClient.lastSentGroupMessageReplyToId, 1);
+      expect(find.byKey(const Key('reply-composer-bar')), findsNothing);
+      // The sent reply shows its quote of the original.
+      expect(find.byKey(const Key('reply-quote')), findsOneWidget);
+      expect(find.text('Who has spare seeds?'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets('long-press offers Reply, and the reply bar can be cancelled', (
+    tester,
+  ) async {
+    final group = _buildGroup(id: 1, name: 'Tomato Growers');
+    final fakeClient = FakeApiClient()
+      ..groupMessagesResult = PaginatedResponse(
+        data: [
+          GroupMessage(
+            id: 1,
+            groupId: 1,
+            body: 'Hello',
+            sender: buildFakeUser(id: 2, name: 'Elena'),
+            createdAt: DateTime.now(),
+          ),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 1,
+      );
+
+    await _pumpGroupChat(tester, fakeClient, group);
+
+    await tester.longPress(find.byKey(const Key('message-bubble-1')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('report-message')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('reply-to-message')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Replying to Elena'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('cancel-reply')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('reply-composer-bar')), findsNothing);
+  });
+
+  testWidgets('a reply whose original is gone says it is unavailable', (
+    tester,
+  ) async {
+    final group = _buildGroup(id: 1, name: 'Tomato Growers');
+    final fakeClient = FakeApiClient()
+      ..groupMessagesResult = PaginatedResponse(
+        data: [
+          GroupMessage(
+            id: 9,
+            groupId: 1,
+            body: 'Replying to something',
+            replyToId: 3,
+            sender: buildFakeUser(id: 2, name: 'Elena'),
+            createdAt: DateTime.now(),
+          ),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 1,
+      );
+
+    await _pumpGroupChat(tester, fakeClient, group);
+
+    expect(find.text('Original message unavailable'), findsOneWidget);
+  });
+
+  testWidgets(
+    'long-press lets you react, and tapping your own reaction removes it',
+    (tester) async {
+      final group = _buildGroup(id: 1, name: 'Tomato Growers');
+      final fakeClient = FakeApiClient()
+        ..groupMessagesResult = PaginatedResponse(
+          data: [
+            GroupMessage(
+              id: 1,
+              groupId: 1,
+              body: 'First harvest!',
+              sender: buildFakeUser(id: 2, name: 'Elena'),
+              createdAt: DateTime.now(),
+            ),
+          ],
+          currentPage: 1,
+          lastPage: 1,
+          total: 1,
+        )
+        ..reactionResult = const [
+          MessageReaction(emoji: '👍', userIds: [1]),
+        ];
+
+      await _pumpGroupChat(tester, fakeClient, group);
+
+      await tester.longPress(find.byKey(const Key('message-bubble-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('react-👍')));
+      await tester.pumpAndSettle();
+
+      expect(fakeClient.reactionCalls.last, (1, '👍'));
+      expect(find.byKey(const Key('reaction-chip-👍')), findsOneWidget);
+
+      fakeClient.reactionResult = const [];
+      await tester.tap(find.byKey(const Key('reaction-chip-👍')));
+      await tester.pumpAndSettle();
+
+      expect(fakeClient.reactionCalls.last, (1, null));
+      expect(find.byKey(const Key('reaction-chip-👍')), findsNothing);
+    },
+  );
+
+  testWidgets('a failed reaction is rolled back', (tester) async {
+    final group = _buildGroup(id: 1, name: 'Tomato Growers');
+    final fakeClient = FakeApiClient()
+      ..groupMessagesResult = PaginatedResponse(
+        data: [
+          GroupMessage(
+            id: 1,
+            groupId: 1,
+            body: 'Hi',
+            sender: buildFakeUser(id: 2, name: 'Elena'),
+            createdAt: DateTime.now(),
+          ),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 1,
+      )
+      ..reactionError = const ApiException(message: 'No connection');
+
+    await _pumpGroupChat(tester, fakeClient, group);
+
+    await tester.longPress(find.byKey(const Key('message-bubble-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('react-😂')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('reaction-chip-😂')), findsNothing);
+    expect(find.text('No connection'), findsOneWidget);
+  });
+
+  testWidgets('reactions from others arrive live over the channel', (
+    tester,
+  ) async {
+    final group = _buildGroup(id: 1, name: 'Tomato Growers');
+    FakeGroupRealtimeChannel? channel;
+    final fakeClient = FakeApiClient()
+      ..groupMessagesResult = PaginatedResponse(
+        data: [
+          GroupMessage(
+            id: 1,
+            groupId: 1,
+            body: 'Hi',
+            sender: buildFakeUser(id: 1, name: 'Me'),
+            createdAt: DateTime.now(),
+          ),
+        ],
+        currentPage: 1,
+        lastPage: 1,
+        total: 1,
+      );
+
+    await _pumpGroupChat(
+      tester,
+      fakeClient,
+      group,
+      onChannelCreated: (c) => channel = c,
+    );
+
+    channel!.onReactions!(1, const [
+      MessageReaction(emoji: '🙏', userIds: [2, 3]),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('🙏 2'), findsOneWidget);
+  });
 
   testWidgets('sending a message calls the API and appears in the thread', (
     tester,
@@ -215,44 +487,41 @@ void main() {
     },
   );
 
-  testWidgets(
-    'does not show a message twice when the realtime echo beats the '
-    "send request's own HTTP response",
-    (tester) async {
-      final group = _buildGroup(id: 1, name: 'Tomato Growers');
-      final fakeClient = _DelayedSendApiClient();
-      late FakeGroupRealtimeChannel channel;
+  testWidgets('does not show a message twice when the realtime echo beats the '
+      "send request's own HTTP response", (tester) async {
+    final group = _buildGroup(id: 1, name: 'Tomato Growers');
+    final fakeClient = _DelayedSendApiClient();
+    late FakeGroupRealtimeChannel channel;
 
-      await _pumpGroupChat(
-        tester,
-        fakeClient,
-        group,
-        onChannelCreated: (c) => channel = c,
-      );
+    await _pumpGroupChat(
+      tester,
+      fakeClient,
+      group,
+      onChannelCreated: (c) => channel = c,
+    );
 
-      await tester.enterText(find.byType(TextField), 'On my way!');
-      await tester.tap(find.byIcon(Icons.send));
-      await tester.pump();
+    await tester.enterText(find.byType(TextField), 'On my way!');
+    await tester.tap(find.byIcon(Icons.send));
+    await tester.pump();
 
-      final confirmed = GroupMessage(
-        id: 5,
-        groupId: 1,
-        body: 'On my way!',
-        sender: buildFakeUser(id: 1, name: 'Me'),
-        senderIsAdmin: false,
-        createdAt: DateTime.now(),
-      );
+    final confirmed = GroupMessage(
+      id: 5,
+      groupId: 1,
+      body: 'On my way!',
+      sender: buildFakeUser(id: 1, name: 'Me'),
+      senderIsAdmin: false,
+      createdAt: DateTime.now(),
+    );
 
-      // The realtime broadcast of this exact message arrives before this
-      // request's own HTTP response does — a real race with Reverb.
-      channel.onMessage?.call(confirmed);
-      await tester.pump();
-      fakeClient.resolve(confirmed);
-      await tester.pumpAndSettle();
+    // The realtime broadcast of this exact message arrives before this
+    // request's own HTTP response does — a real race with Reverb.
+    channel.onMessage?.call(confirmed);
+    await tester.pump();
+    fakeClient.resolve(confirmed);
+    await tester.pumpAndSettle();
 
-      expect(find.text('On my way!'), findsOneWidget);
-    },
-  );
+    expect(find.text('On my way!'), findsOneWidget);
+  });
 
   testWidgets('shows the real pinned banner with an unpin control for admins', (
     tester,
@@ -306,7 +575,8 @@ void main() {
             GroupMessage(
               id: 1,
               groupId: 1,
-              body: 'Welcome new growers! Remember that frost danger is mostly past.',
+              body:
+                  'Welcome new growers! Remember that frost danger is mostly past.',
               sender: buildFakeUser(id: 2, name: 'Dr. Aris Thorne'),
               senderIsAdmin: true,
               createdAt: DateTime.now(),

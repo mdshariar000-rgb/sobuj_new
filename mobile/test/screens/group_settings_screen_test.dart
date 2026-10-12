@@ -75,9 +75,7 @@ void main() {
     );
   });
 
-  testWidgets('saving sends the real edited fields to the API', (
-    tester,
-  ) async {
+  testWidgets('saving sends the real edited fields to the API', (tester) async {
     final group = _buildGroup(id: 1, name: 'Rare Seed Traders');
     final fakeClient = FakeApiClient()
       ..updateGroupResult = _buildGroup(id: 1, name: 'Rare Seed Traders');

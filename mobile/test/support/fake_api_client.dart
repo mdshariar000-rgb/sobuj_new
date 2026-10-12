@@ -1,15 +1,16 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
-import 'package:shobuj_mobile/models/agri_ai_config.dart';
 import 'package:shobuj_mobile/models/app_notification.dart';
 import 'package:shobuj_mobile/models/app_user.dart';
-import 'package:shobuj_mobile/models/ai_conversation.dart';
 import 'package:shobuj_mobile/models/comment.dart';
 import 'package:shobuj_mobile/models/enums.dart';
 import 'package:shobuj_mobile/models/event.dart';
 import 'package:shobuj_mobile/models/event_category.dart';
 import 'package:shobuj_mobile/models/event_enums.dart';
+import 'package:shobuj_mobile/models/event_review.dart';
+import 'package:shobuj_mobile/models/feed_marketplace.dart';
 import 'package:shobuj_mobile/models/group.dart';
 import 'package:shobuj_mobile/models/group_category.dart';
 import 'package:shobuj_mobile/models/group_join_request.dart';
@@ -17,29 +18,43 @@ import 'package:shobuj_mobile/models/group_member.dart';
 import 'package:shobuj_mobile/models/group_message.dart';
 import 'package:shobuj_mobile/models/listing.dart';
 import 'package:shobuj_mobile/models/listing_category.dart';
+import 'package:shobuj_mobile/models/listing_review.dart';
+import 'package:shobuj_mobile/models/message_reaction.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/models/post.dart';
-import 'package:shobuj_mobile/models/post_category.dart';
 import 'package:shobuj_mobile/models/report.dart';
-import 'package:shobuj_mobile/models/subscription_status.dart';
+import 'package:shobuj_mobile/models/search_results.dart';
+import 'package:shobuj_mobile/models/sowing_guide_month.dart';
 import 'package:shobuj_mobile/models/swap_message.dart';
 import 'package:shobuj_mobile/models/swap_offer.dart';
+import 'package:shobuj_mobile/models/uk_address.dart';
 import 'package:shobuj_mobile/services/api_client.dart';
+import 'package:shobuj_mobile/services/social_sign_in_service.dart';
 import 'package:shobuj_mobile/services/api_exception.dart';
 
 AppUser buildFakeUser({
   int id = 1,
   String name = 'Rina',
   String email = 'rina@example.com',
+  int? followersCount,
+  int? followingCount,
+  bool? isFollowing,
+  bool hasPassword = true,
+  List<String> signedInWith = const [],
 }) {
   return AppUser(
     id: id,
     name: name,
     email: email,
+    hasPassword: hasPassword,
+    signedInWith: signedInWith,
     isSuspended: false,
     suspensionReason: null,
     isVerified: false,
     ratingAvg: 0,
+    followersCount: followersCount,
+    followingCount: followingCount,
+    isFollowing: isFollowing,
     createdAt: DateTime(2026, 1, 1),
   );
 }
@@ -60,6 +75,8 @@ class FakeApiClient extends ApiClient {
   AuthResult? registerResult;
   ApiException? registerError;
   String? lastRegisterLocationLabel;
+  List<String>? lastRegisterInterests;
+  UkAddress? lastRegisterAddress;
 
   bool logoutCalled = false;
 
@@ -101,6 +118,98 @@ class FakeApiClient extends ApiClient {
         );
   }
 
+  /// Backs [UserProfileNotifier.toggleFollow] — set [followUserResult]/
+  /// [unfollowUserResult] (or the matching error) per test; defaults to
+  /// flipping [buildFakeUser]'s is_following if neither is configured.
+  final followedUserIds = <int>[];
+  final unfollowedUserIds = <int>[];
+  AppUser? followUserResult;
+  ApiException? followUserError;
+  AppUser? unfollowUserResult;
+  ApiException? unfollowUserError;
+  List<AppUser> userFollowersResult = [];
+  List<AppUser> userFollowingResult = [];
+
+  @override
+  Future<AppUser> followUser(int userId) async {
+    if (followUserError != null) throw followUserError!;
+    followedUserIds.add(userId);
+    return followUserResult ??
+        buildFakeUser(id: userId, name: 'Grower', isFollowing: true);
+  }
+
+  @override
+  Future<AppUser> unfollowUser(int userId) async {
+    if (unfollowUserError != null) throw unfollowUserError!;
+    unfollowedUserIds.add(userId);
+    return unfollowUserResult ??
+        buildFakeUser(id: userId, name: 'Grower', isFollowing: false);
+  }
+
+  @override
+  Future<PaginatedResponse<AppUser>> userFollowers(
+    int userId, {
+    int page = 1,
+  }) async {
+    return PaginatedResponse(
+      data: userFollowersResult,
+      currentPage: 1,
+      lastPage: 1,
+      total: userFollowersResult.length,
+    );
+  }
+
+  @override
+  Future<PaginatedResponse<AppUser>> userFollowing(
+    int userId, {
+    int page = 1,
+  }) async {
+    return PaginatedResponse(
+      data: userFollowingResult,
+      currentPage: 1,
+      lastPage: 1,
+      total: userFollowingResult.length,
+    );
+  }
+
+  SocialConfig socialConfigResult = SocialConfig.off;
+
+  @override
+  Future<SocialConfig> socialConfig() async => socialConfigResult;
+
+  /// Answers POST /auth/social: [socialSignupResult] once an address is
+  /// sent, else [socialLoginResult].
+  SocialLoginResult? socialLoginResult;
+  AuthResult? socialSignupResult;
+  ApiException? socialLoginError;
+  final socialLoginCalls = <Map<String, Object?>>[];
+
+  @override
+  Future<SocialLoginResult> socialLogin({
+    required String provider,
+    required String idToken,
+    String? nonce,
+    String? name,
+    double? latitude,
+    double? longitude,
+    String? locationLabel,
+    UkAddress? address,
+  }) async {
+    socialLoginCalls.add({
+      'provider': provider,
+      'idToken': idToken,
+      'nonce': nonce,
+      'name': name,
+      'latitude': latitude,
+      'address': address,
+    });
+    if (socialLoginError != null) throw socialLoginError!;
+    if (address != null) {
+      return SocialSignedIn(socialSignupResult!, isNewUser: true);
+    }
+    return socialLoginResult!;
+  }
+
   @override
   Future<AuthResult> login({
     required String email,
@@ -121,8 +230,12 @@ class FakeApiClient extends ApiClient {
     String? locationLabel,
     String? experienceLevel,
     String? growingSetup,
+    List<String> growingInterests = const [],
+    UkAddress? address,
   }) async {
     lastRegisterLocationLabel = locationLabel;
+    lastRegisterAddress = address;
+    lastRegisterInterests = growingInterests;
     if (registerError != null) throw registerError!;
     return registerResult!;
   }
@@ -135,14 +248,38 @@ class FakeApiClient extends ApiClient {
   String? lastDeletedAccountPassword;
   ApiException? deleteAccountError;
 
+  ({String? provider, String? idToken, String? nonce, String? code})?
+  lastDeletedAccountToken;
+
   @override
-  Future<void> deleteAccount({required String password}) async {
+  Future<void> deleteAccount({
+    String? password,
+    String? provider,
+    String? idToken,
+    String? nonce,
+    String? authorizationCode,
+  }) async {
     lastDeletedAccountPassword = password;
+    if (idToken != null) {
+      lastDeletedAccountToken = (
+        provider: provider,
+        idToken: idToken,
+        nonce: nonce,
+        code: authorizationCode,
+      );
+    }
     if (deleteAccountError != null) throw deleteAccountError!;
   }
 
   final reportsFiled =
-      <({ReportTarget target, int targetId, ReportReason reason, String? details})>[];
+      <
+        ({
+          ReportTarget target,
+          int targetId,
+          ReportReason reason,
+          String? details,
+        })
+      >[];
   ApiException? reportError;
 
   @override
@@ -227,8 +364,14 @@ class FakeApiClient extends ApiClient {
     GrowingSetup? growingSetup,
     File? avatar,
     File? coverPhoto,
+    UkAddress? address,
+    double? latitude,
+    double? longitude,
   }) async {
     lastUpdateProfileArgs = {
+      'address': address,
+      'latitude': latitude,
+      'longitude': longitude,
       'name': name,
       'username': username,
       'bio': bio,
@@ -261,25 +404,13 @@ class FakeApiClient extends ApiClient {
         );
   }
 
-  PaginatedResponse<Post>? homeFeedResult;
-  ApiException? homeFeedError;
-  String? lastHomeFeedSearch;
-  String? lastHomeFeedCategory;
+  PaginatedResponse<Post>? userPostsResult;
+  int? lastUserPostsId;
 
-  /// Defaults to an empty result for the same reason as [nearbyListings] —
-  /// the Home Feed is the default tab after login, so most tests that land
-  /// there as a side effect shouldn't trip a real network call.
   @override
-  Future<PaginatedResponse<Post>> homeFeed({
-    String? search,
-    int? authorId,
-    String? category,
-    int page = 1,
-  }) async {
-    lastHomeFeedSearch = search;
-    lastHomeFeedCategory = category;
-    if (homeFeedError != null) throw homeFeedError!;
-    return homeFeedResult ??
+  Future<PaginatedResponse<Post>> userPosts(int userId, {int page = 1}) async {
+    lastUserPostsId = userId;
+    return userPostsResult ??
         const PaginatedResponse(
           data: [],
           currentPage: 1,
@@ -290,35 +421,17 @@ class FakeApiClient extends ApiClient {
 
   Post? createPostResult;
   ApiException? createPostError;
-  String? lastCreatePostCategory;
+  int? lastCreatePostGroupId;
 
   @override
   Future<Post> createPost({
     required String body,
-    int? groupId,
-    String? category,
+    required int groupId,
     File? image,
   }) async {
-    lastCreatePostCategory = category;
+    lastCreatePostGroupId = groupId;
     if (createPostError != null) throw createPostError!;
     return createPostResult!;
-  }
-
-  List<PostCategory>? postCategoriesResult;
-  ApiException? postCategoriesError;
-
-  /// Defaults to the app's real seeded list (General/Disease Alert/Harvest)
-  /// so tests that touch the Home Feed or composer without caring about
-  /// categories specifically still see realistic chips/options.
-  @override
-  Future<List<PostCategory>> postCategories() async {
-    if (postCategoriesError != null) throw postCategoriesError!;
-    return postCategoriesResult ??
-        const [
-          PostCategory(id: 1, name: 'General'),
-          PostCategory(id: 2, name: 'Disease Alert'),
-          PostCategory(id: 3, name: 'Harvest'),
-        ];
   }
 
   bool deletePostCalled = false;
@@ -332,20 +445,17 @@ class FakeApiClient extends ApiClient {
   ApiException? updatePostError;
   int? lastUpdatePostId;
   String? lastUpdatePostBody;
-  String? lastUpdatePostCategory;
   bool? lastUpdatePostRemoveImage;
 
   @override
   Future<Post> updatePost(
     int postId, {
     String? body,
-    String? category,
     File? image,
     bool removeImage = false,
   }) async {
     lastUpdatePostId = postId;
     lastUpdatePostBody = body;
-    lastUpdatePostCategory = category;
     lastUpdatePostRemoveImage = removeImage;
     if (updatePostError != null) throw updatePostError!;
     return updatePostResult!;
@@ -369,6 +479,89 @@ class FakeApiClient extends ApiClient {
     unlikedPostId = postId;
     if (likePostError != null) throw likePostError!;
     return unlikePostResult!;
+  }
+
+  FeedMarketplace? feedMarketplaceResult;
+  ApiException? feedMarketplaceError;
+  int feedMarketplaceCalls = 0;
+
+  /// Empty by default, so feed tests that don't care see plain posts.
+  @override
+  Future<FeedMarketplace> feedMarketplace() async {
+    feedMarketplaceCalls++;
+    if (feedMarketplaceError != null) throw feedMarketplaceError!;
+    return feedMarketplaceResult ?? const FeedMarketplace();
+  }
+
+  /// What GET /listings/{id} returns — the listing detail screen refreshes
+  /// itself from it. Unset means the fetch fails and the screen keeps the
+  /// listing it was given.
+  Listing? listingResult;
+
+  @override
+  Future<Listing> listing(int listingId) async {
+    return listingResult ??
+        (throw const ApiException(message: 'Listing not found.'));
+  }
+
+  Listing? updateListingResult;
+  ListingStatus? lastUpdatedListingStatus;
+  int? lastUpdatedListingQuantity;
+  List<int> lastRemovedPhotoIds = const [];
+  @override
+  Future<Listing> updateListing(
+    int listingId, {
+    String? title,
+    String? description,
+    String? listingType,
+    double? price,
+    int? quantity,
+    String? contact,
+    String? lookingFor,
+    ListingStatus? status,
+    List<File> newPhotos = const [],
+    List<int> removePhotoIds = const [],
+  }) async {
+    lastUpdatedListingStatus = status;
+    lastUpdatedListingQuantity = quantity;
+    lastRemovedPhotoIds = removePhotoIds;
+    return updateListingResult!;
+  }
+
+  int? deletedListingId;
+  @override
+  Future<void> deleteListing(int listingId) async {
+    deletedListingId = listingId;
+  }
+
+  final savedListingIds = <int>[];
+  final unsavedListingIds = <int>[];
+  ApiException? saveListingError;
+
+  /// Echoes back the listing from [feedMarketplaceResult] with its new
+  /// saved state, like the real endpoint.
+  Listing _savedCopy(int listingId, bool isSaved) {
+    final all = [
+      ...?feedMarketplaceResult?.nearby,
+      ...?feedMarketplaceResult?.fromFollowing,
+    ];
+    return all
+        .firstWhere((listing) => listing.id == listingId)
+        .copyWith(isSaved: isSaved);
+  }
+
+  @override
+  Future<Listing> saveListing(int listingId) async {
+    savedListingIds.add(listingId);
+    if (saveListingError != null) throw saveListingError!;
+    return _savedCopy(listingId, true);
+  }
+
+  @override
+  Future<Listing> unsaveListing(int listingId) async {
+    unsavedListingIds.add(listingId);
+    if (saveListingError != null) throw saveListingError!;
+    return _savedCopy(listingId, false);
   }
 
   PaginatedResponse<Comment>? postCommentsResult;
@@ -409,6 +602,69 @@ class FakeApiClient extends ApiClient {
   @override
   Future<void> deleteComment(int commentId) async {
     deleteCommentCalled = true;
+  }
+
+  PaginatedResponse<ListingReview>? listingReviewsResult;
+  ApiException? listingReviewsError;
+
+  @override
+  Future<PaginatedResponse<ListingReview>> listingReviews(
+    int listingId, {
+    int page = 1,
+  }) async {
+    if (listingReviewsError != null) throw listingReviewsError!;
+    return listingReviewsResult ??
+        const PaginatedResponse(
+          data: [],
+          currentPage: 1,
+          lastPage: 1,
+          total: 0,
+        );
+  }
+
+  ListingReview? submitListingReviewResult;
+  ApiException? submitListingReviewError;
+  int? lastSubmitListingReviewRating;
+  String? lastSubmitListingReviewComment;
+
+  @override
+  Future<ListingReview> submitListingReview(
+    int listingId, {
+    required int rating,
+    String? comment,
+  }) async {
+    lastSubmitListingReviewRating = rating;
+    lastSubmitListingReviewComment = comment;
+    if (submitListingReviewError != null) throw submitListingReviewError!;
+    return submitListingReviewResult!;
+  }
+
+  bool deleteListingReviewCalled = false;
+  int? lastDeletedListingReviewId;
+
+  @override
+  Future<void> deleteListingReview(int listingId, int reviewId) async {
+    deleteListingReviewCalled = true;
+    lastDeletedListingReviewId = reviewId;
+  }
+
+  List<SowingGuideMonth>? sowingGuideResult;
+  ApiException? sowingGuideError;
+
+  /// Defaults to all 12 months so "What can you grow now?" renders whatever
+  /// month the test happens to run in.
+  @override
+  Future<List<SowingGuideMonth>> sowingGuide() async {
+    if (sowingGuideError != null) throw sowingGuideError!;
+    return sowingGuideResult ??
+        [
+          for (var month = 1; month <= 12; month++)
+            SowingGuideMonth(
+              month: month,
+              outdoors: const ['Garlic', 'Broad beans'],
+              underCover: const ['Microgreens'],
+            ),
+        ];
   }
 
   List<ListingCategory>? listingCategoriesResult;
@@ -460,17 +716,31 @@ class FakeApiClient extends ApiClient {
   Future<PaginatedResponse<Group>> groups({
     String? search,
     String? category,
+    String? membership,
     int page = 1,
   }) async {
     lastGroupsCallArgs = {'search': search, 'category': category, 'page': page};
     if (groupsError != null) throw groupsError!;
-    return groupsResult ??
-        const PaginatedResponse(
+    final all =
+        groupsResult ??
+        const PaginatedResponse<Group>(
           data: [],
           currentPage: 1,
           lastPage: 1,
           total: 0,
         );
+    if (membership == null) return all;
+    // Like the server's ?membership=mine|others split.
+    final wantMine = membership == 'mine';
+    final data = all.data
+        .where((g) => (g.isMember ?? false) == wantMine)
+        .toList();
+    return PaginatedResponse(
+      data: data,
+      currentPage: all.currentPage,
+      lastPage: all.lastPage,
+      total: data.length,
+    );
   }
 
   Group? groupResult;
@@ -649,16 +919,60 @@ class FakeApiClient extends ApiClient {
   GroupMessage? sendGroupMessageResult;
   ApiException? sendGroupMessageError;
   String? lastSentGroupMessageBody;
+  List<File> lastSentGroupMessageImages = const [];
+  int? lastSentGroupMessageReplyToId;
 
   @override
   Future<GroupMessage> sendGroupMessage(
     int groupId, {
     String? body,
-    File? image,
+    List<File> images = const [],
+    int? replyToId,
   }) async {
     lastSentGroupMessageBody = body;
+    lastSentGroupMessageImages = images;
+    lastSentGroupMessageReplyToId = replyToId;
     if (sendGroupMessageError != null) throw sendGroupMessageError!;
     return sendGroupMessageResult!;
+  }
+
+  List<AppUser> suggestedUsersResult = const [];
+  List<Group> suggestedGroupsResult = const [];
+
+  @override
+  Future<List<AppUser>> suggestedUsers() async => suggestedUsersResult;
+
+  String? suggestedGroupsCity;
+
+  @override
+  Future<SuggestedGroups> suggestedGroups() async =>
+      SuggestedGroups(city: suggestedGroupsCity, groups: suggestedGroupsResult);
+
+  /// Every reaction call as (messageId, emoji) — emoji null means removed.
+  final List<(int, String?)> reactionCalls = [];
+  List<MessageReaction>? reactionResult;
+  ApiException? reactionError;
+
+  @override
+  Future<List<MessageReaction>> setGroupMessageReaction(
+    int groupId,
+    int messageId,
+    String? emoji,
+  ) async {
+    reactionCalls.add((messageId, emoji));
+    if (reactionError != null) throw reactionError!;
+    return reactionResult ?? const [];
+  }
+
+  @override
+  Future<List<MessageReaction>> setSwapOfferMessageReaction(
+    int swapOfferId,
+    int messageId,
+    String? emoji,
+  ) async {
+    reactionCalls.add((messageId, emoji));
+    if (reactionError != null) throw reactionError!;
+    return reactionResult ?? const [];
   }
 
   PaginatedResponse<SwapOffer>? mySwapOffersResult;
@@ -699,14 +1013,24 @@ class FakeApiClient extends ApiClient {
   SwapMessage? sendSwapOfferMessageResult;
   ApiException? sendSwapOfferMessageError;
   String? lastSentSwapOfferMessageBody;
+  List<File> lastSentSwapOfferMessageImages = const [];
+  int? lastSentSwapOfferMessageReplyToId;
+
+  /// When set, the send waits for it — to deliver a realtime echo while the
+  /// request is still in flight.
+  Completer<void>? sendSwapOfferMessageGate;
 
   @override
   Future<SwapMessage> sendSwapOfferMessage(
     int swapOfferId, {
     String? body,
-    File? image,
+    List<File> images = const [],
+    int? replyToId,
   }) async {
     lastSentSwapOfferMessageBody = body;
+    lastSentSwapOfferMessageImages = images;
+    lastSentSwapOfferMessageReplyToId = replyToId;
+    await sendSwapOfferMessageGate?.future;
     if (sendSwapOfferMessageError != null) throw sendSwapOfferMessageError!;
     return sendSwapOfferMessageResult!;
   }
@@ -729,107 +1053,13 @@ class FakeApiClient extends ApiClient {
         );
   }
 
-  PaginatedResponse<AiConversation>? aiConversationsResult;
-  ApiException? aiConversationsError;
-
-  @override
-  Future<PaginatedResponse<AiConversation>> aiConversations({
-    int page = 1,
-  }) async {
-    if (aiConversationsError != null) throw aiConversationsError!;
-    return aiConversationsResult ??
-        const PaginatedResponse(
-          data: [],
-          currentPage: 1,
-          lastPage: 1,
-          total: 0,
-        );
-  }
-
-  AiConversation? aiConversationResult;
-  ApiException? aiConversationError;
-
-  @override
-  Future<AiConversation> aiConversation(int conversationId) async {
-    if (aiConversationError != null) throw aiConversationError!;
-    return aiConversationResult!;
-  }
-
-  AiConversation? sendAiMessageResult;
-  ApiException? sendAiMessageError;
-  int? lastSendAiMessageConversationId;
-
-  @override
-  Future<AiConversation> sendAiMessage({
-    int? conversationId,
-    String? body,
-    File? photo,
-  }) async {
-    lastSendAiMessageConversationId = conversationId;
-    if (sendAiMessageError != null) throw sendAiMessageError!;
-    return sendAiMessageResult!;
-  }
-
-  SubscriptionStatus? subscriptionStatusResult;
-  ApiException? subscriptionStatusError;
-
-  /// Defaults to "subscribed" — like [aiConversations], the Agri-AI tab is
-  /// reachable by default in tests that aren't specifically about the
-  /// paywall; override with an explicit `hasAccess: false` result to test
-  /// the gate itself.
-  @override
-  Future<SubscriptionStatus> subscriptionStatus() async {
-    if (subscriptionStatusError != null) throw subscriptionStatusError!;
-    return subscriptionStatusResult ??
-        const SubscriptionStatus(
-          hasAccess: true,
-          plan: 'monthly',
-          status: 'active',
-          onTrial: false,
-          cancelAtPeriodEnd: false,
-        );
-  }
-
-  AgriAiConfig agriAiConfigResult = const AgriAiConfig(
-    publishableKey: 'pk_test_fake',
-    monthlyPriceUsd: 9.99,
-    annualPriceUsd: 71.88,
-  );
-
-  @override
-  Future<AgriAiConfig> agriAiConfig() async => agriAiConfigResult;
-
-  SubscribeResult? createSubscriptionResult;
-  ApiException? createSubscriptionError;
-  String? lastSubscribePlan;
-  String? lastSubscribePaymentMethodId;
-
-  @override
-  Future<SubscribeResult> createSubscription({
-    required String plan,
-    required String paymentMethodId,
-  }) async {
-    lastSubscribePlan = plan;
-    lastSubscribePaymentMethodId = paymentMethodId;
-    if (createSubscriptionError != null) throw createSubscriptionError!;
-    return createSubscriptionResult!;
-  }
-
-  SubscriptionStatus? cancelSubscriptionResult;
-  ApiException? cancelSubscriptionError;
-  bool cancelSubscriptionCalled = false;
-
-  @override
-  Future<SubscriptionStatus> cancelSubscription() async {
-    cancelSubscriptionCalled = true;
-    if (cancelSubscriptionError != null) throw cancelSubscriptionError!;
-    return cancelSubscriptionResult!;
-  }
-
   PaginatedResponse<Event>? eventsResult;
   ApiException? eventsError;
   String? lastEventsMonth;
   String? lastEventsCategory;
+  bool? lastEventsForYou;
+  String? lastEventsSearch;
+  List<Event> goingEventsResult = const [];
 
   /// Per-month results for the calendar view — keyed by 'YYYY-MM'. Takes
   /// priority over [eventsResult] when the requested month has an entry, so
@@ -843,11 +1073,24 @@ class FakeApiClient extends ApiClient {
     int? groupId,
     String? month,
     String? category,
+    bool forYou = false,
+    String? search,
+    bool going = false,
     int page = 1,
   }) async {
     lastEventsMonth = month;
     lastEventsCategory = category;
+    lastEventsForYou = forYou;
+    lastEventsSearch = search;
     if (eventsError != null) throw eventsError!;
+    if (going) {
+      return PaginatedResponse(
+        data: goingEventsResult,
+        currentPage: 1,
+        lastPage: 1,
+        total: goingEventsResult.length,
+      );
+    }
     if (month != null && eventsByMonth?.containsKey(month) == true) {
       return eventsByMonth![month]!;
     }
@@ -889,11 +1132,201 @@ class FakeApiClient extends ApiClient {
     required DateTime startsAt,
     DateTime? endsAt,
     int? capacity,
+    double? registrationFee,
+    List<DateTime> proposedDates = const [],
     required EventStatus status,
   }) async {
+    lastCreateEventFee = registrationFee;
+    lastCreateEventProposedDates = proposedDates;
+    lastCreateEventEndsAt = endsAt;
     if (createEventError != null) throw createEventError!;
     return createEventResult!;
   }
+
+  double? lastCreateEventFee;
+  List<DateTime>? lastCreateEventProposedDates;
+  DateTime? lastCreateEventEndsAt;
+  int? lastUpdatedEventId;
+  EventStatus? lastUpdatedEventStatus;
+  DateTime? lastUpdatedEventStartsAt;
+  DateTime? lastUpdatedEventEndsAt;
+
+  @override
+  Future<Event> updateEvent(
+    int eventId, {
+    required String title,
+    String? description,
+    required EventFormat format,
+    String? category,
+    File? coverImage,
+    String? location,
+    required DateTime startsAt,
+    DateTime? endsAt,
+    int? capacity,
+    double? registrationFee,
+    List<DateTime> proposedDates = const [],
+    required EventStatus status,
+  }) async {
+    lastUpdatedEventId = eventId;
+    lastUpdatedEventStatus = status;
+    lastUpdatedEventStartsAt = startsAt;
+    lastUpdatedEventEndsAt = endsAt;
+    if (createEventError != null) throw createEventError!;
+    return createEventResult!;
+  }
+
+  List<Event> savedEventsResult = const [];
+
+  @override
+  Future<PaginatedResponse<Event>> savedEvents({int page = 1}) async =>
+      PaginatedResponse(
+        data: savedEventsResult,
+        currentPage: 1,
+        lastPage: 1,
+        total: savedEventsResult.length,
+      );
+
+  List<Event> myDraftsResult = const [];
+  List<Event> hostingEventsResult = const [];
+
+  @override
+  Future<PaginatedResponse<Event>> myEvents({
+    EventStatus? status,
+    int page = 1,
+  }) async {
+    final data = status == EventStatus.published
+        ? hostingEventsResult
+        : myDraftsResult;
+    return PaginatedResponse(
+      data: data,
+      currentPage: 1,
+      lastPage: 1,
+      total: data.length,
+    );
+  }
+
+  Group? eventChatResult;
+  ApiException? eventChatError;
+
+  @override
+  Future<Group> eventChat(int eventId) async {
+    if (eventChatError != null) throw eventChatError!;
+    return eventChatResult!;
+  }
+
+  List<EventReview> eventReviewsResult = [];
+  final List<({int eventId, int? rating, String? body})> reviewsPosted = [];
+
+  @override
+  Future<PaginatedResponse<EventReview>> eventReviews(
+    int eventId, {
+    int page = 1,
+  }) async {
+    return PaginatedResponse(
+      data: eventReviewsResult,
+      currentPage: 1,
+      lastPage: 1,
+      total: eventReviewsResult.length,
+    );
+  }
+
+  @override
+  Future<EventReview> reviewEvent(
+    int eventId, {
+    int? rating,
+    String? body,
+  }) async {
+    reviewsPosted.add((eventId: eventId, rating: rating, body: body));
+    final review = EventReview(
+      id: 100 + reviewsPosted.length,
+      eventId: eventId,
+      rating: rating,
+      body: body,
+      user: meResult,
+      createdAt: DateTime.now(),
+    );
+    eventReviewsResult = [review, ...eventReviewsResult];
+    return review;
+  }
+
+  final List<int> deletedEventReviewIds = [];
+
+  @override
+  Future<void> deleteEventReview(int eventId, int reviewId) async {
+    deletedEventReviewIds.add(reviewId);
+    eventReviewsResult = [
+      for (final review in eventReviewsResult)
+        if (review.id != reviewId) review,
+    ];
+  }
+
+  final List<({String name, String? description})> groupRequests = [];
+
+  @override
+  Future<void> requestGroup({required String name, String? description}) async {
+    groupRequests.add((name: name, description: description));
+  }
+
+  /// Null by default: lookups "not set up" (503), so address forms in other
+  /// tests open the lines to type by hand after Find address.
+  List<AddressSuggestion>? postcodeAddressesResult;
+  ApiException? postcodeAddressesError;
+  String? lastPostcodeLookup;
+
+  @override
+  Future<List<AddressSuggestion>> postcodeAddresses(String postcode) async {
+    lastPostcodeLookup = postcode;
+    if (postcodeAddressesError != null) throw postcodeAddressesError!;
+    return postcodeAddressesResult ??
+        (throw const ApiException(
+          message: 'Address lookup is unavailable right now.',
+          statusCode: 503,
+        ));
+  }
+
+  final List<String> passwordResetCodeEmails = [];
+  ({String email, String code, String password})? lastPasswordReset;
+  ApiException? resetPasswordError;
+
+  @override
+  Future<void> sendPasswordResetCode(String email) async {
+    passwordResetCodeEmails.add(email);
+  }
+
+  @override
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String password,
+  }) async {
+    if (resetPasswordError != null) throw resetPasswordError!;
+    lastPasswordReset = (email: email, code: code, password: password);
+  }
+
+  SearchResults searchResult = const SearchResults();
+  final List<String> searchedTerms = [];
+  List<String> searchHistoryResult = [];
+
+  @override
+  Future<SearchResults> search(String term) async {
+    searchedTerms.add(term);
+    return searchResult;
+  }
+
+  SearchSuggestions suggestionsResult = const SearchSuggestions();
+  final List<String> suggestedTerms = [];
+
+  @override
+  Future<SearchSuggestions> searchSuggestions(String term) async {
+    suggestedTerms.add(term);
+    return suggestionsResult;
+  }
+
+  @override
+  Future<List<String>> searchHistory() async => searchHistoryResult;
+
+  @override
+  Future<void> clearSearchHistory() async => searchHistoryResult = [];
 
   Event? rsvpToEventResult;
   ApiException? rsvpToEventError;

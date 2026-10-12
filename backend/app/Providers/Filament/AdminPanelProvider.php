@@ -42,6 +42,7 @@ class AdminPanelProvider extends PanelProvider
                 NavigationGroup::make('Moderation'),
                 NavigationGroup::make('Categories')
                     ->collapsed(),
+                NavigationGroup::make('Content'),
                 NavigationGroup::make('System'),
             ])
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\\Filament\\Resources')

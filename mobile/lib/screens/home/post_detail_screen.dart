@@ -6,6 +6,7 @@ import '../../models/comment.dart';
 import '../../models/post.dart';
 import '../../models/report.dart';
 import '../../providers/auth_providers.dart';
+import '../../providers/core_providers.dart';
 import '../../providers/group_providers.dart';
 import '../../providers/post_providers.dart';
 import '../../services/api_exception.dart';
@@ -15,6 +16,7 @@ import '../../widgets/user_avatar.dart';
 import '../discovery/seller_profile_screen.dart';
 import 'widgets/edit_post_sheet.dart';
 import 'widgets/post_card.dart';
+import '../../widgets/shimmer.dart';
 
 /// A single post plus its comment thread — reached by tapping a [PostCard]
 /// in the Home Feed (and, in a later phase, a group's discussion thread,
@@ -75,18 +77,13 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     });
   }
 
-  /// Home Feed posts have no group_id; group discussion posts do.
+  /// Keeps the comment count on the group's post list in step.
   void _updateCommentsCountInOrigin(int commentsCount) {
-    if (_post.groupId == null) {
-      ref.read(homeFeedProvider.notifier).updateCommentsCount(
-        _post.id,
-        commentsCount,
-      );
-    } else {
-      ref
-          .read(groupPostsProvider(_post.groupId!).notifier)
-          .updateCommentsCount(_post.id, commentsCount);
-    }
+    final groupId = _post.groupId;
+    if (groupId == null) return;
+    ref
+        .read(groupPostsProvider(groupId).notifier)
+        .updateCommentsCount(_post.id, commentsCount);
   }
 
   void _startReply(Comment comment) {
@@ -131,8 +128,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
         .read(postCommentsProvider(widget.post.id).notifier)
         .deleteComment(commentId);
     final commentsCount =
-        ref.read(postCommentsProvider(widget.post.id)).valueOrNull?.length ??
-        0;
+        ref.read(postCommentsProvider(widget.post.id)).valueOrNull?.length ?? 0;
     setState(() => _post = _post.copyWith(commentsCount: commentsCount));
     _updateCommentsCountInOrigin(commentsCount);
   }
@@ -141,23 +137,22 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     showEditPostSheet(
       context,
       post: _post,
-      onSubmit: (ref, body, category, image, removeImage) async {
-        final updated = _post.groupId == null
+      onSubmit: (ref, body, image, removeImage) async {
+        final groupId = _post.groupId;
+        final updated = groupId == null
             ? await ref
-                  .read(homeFeedProvider.notifier)
+                  .read(apiClientProvider)
                   .updatePost(
                     _post.id,
                     body: body,
-                    category: category,
                     image: image,
                     removeImage: removeImage,
                   )
             : await ref
-                  .read(groupPostsProvider(_post.groupId!).notifier)
+                  .read(groupPostsProvider(groupId).notifier)
                   .updatePost(
                     _post.id,
                     body: body,
-                    category: category,
                     image: image,
                     removeImage: removeImage,
                   );
@@ -169,12 +164,11 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
   Future<void> _deletePost() async {
     if (!await confirmDeletePost(context) || !mounted) return;
 
-    if (_post.groupId == null) {
-      await ref.read(homeFeedProvider.notifier).deletePost(_post.id);
+    final groupId = _post.groupId;
+    if (groupId == null) {
+      await ref.read(apiClientProvider).deletePost(_post.id);
     } else {
-      await ref
-          .read(groupPostsProvider(_post.groupId!).notifier)
-          .deletePost(_post.id);
+      await ref.read(groupPostsProvider(groupId).notifier).deletePost(_post.id);
     }
     if (mounted) Navigator.of(context).pop();
   }
@@ -190,11 +184,15 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
     );
 
     try {
-      if (_post.groupId == null) {
-        await ref.read(homeFeedProvider.notifier).toggleLike(postBeforeToggle);
+      final groupId = _post.groupId;
+      if (groupId == null) {
+        final api = ref.read(apiClientProvider);
+        wasLiked
+            ? await api.unlikePost(_post.id)
+            : await api.likePost(_post.id);
       } else {
         await ref
-            .read(groupPostsProvider(_post.groupId!).notifier)
+            .read(groupPostsProvider(groupId).notifier)
             .toggleLike(postBeforeToggle);
       }
     } on ApiException catch (e) {
@@ -236,9 +234,10 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                   ),
                 ),
                 commentsAsync.when(
-                  loading: () => const Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Center(child: CircularProgressIndicator()),
+                  loading: () => const ShimmerCardList(
+                    count: 3,
+                    thumbSize: 36,
+                    roundThumb: true,
                   ),
                   error: (error, _) => Padding(
                     padding: const EdgeInsets.all(24),
@@ -266,9 +265,7 @@ class _PostDetailScreenState extends ConsumerState<PostDetailScreen> {
                     for (final comment in comments.where(
                       (comment) => comment.isReply,
                     )) {
-                      (repliesByParent[comment.parentId!] ??= []).add(
-                        comment,
-                      );
+                      (repliesByParent[comment.parentId!] ??= []).add(comment);
                     }
 
                     return Column(

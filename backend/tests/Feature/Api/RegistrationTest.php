@@ -3,10 +3,13 @@
 namespace Tests\Feature\Api;
 
 use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class RegistrationTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_registering_with_a_primary_location_label_saves_it(): void
     {
         $response = $this->postJson('/api/v1/auth/register', [
@@ -16,6 +19,9 @@ class RegistrationTest extends TestCase
             'password_confirmation' => 'password123',
             'latitude' => 23.7461,
             'longitude' => 90.3742,
+            'address_line1' => '1 Test Street',
+            'address_city' => 'Leeds',
+            'address_postcode' => 'LS6 3AA',
             'location_label' => 'Dhanmondi, Dhaka',
         ]);
 
@@ -36,6 +42,9 @@ class RegistrationTest extends TestCase
             'password_confirmation' => 'password123',
             'latitude' => 23.8759,
             'longitude' => 90.3795,
+            'address_line1' => '1 Test Street',
+            'address_city' => 'Leeds',
+            'address_postcode' => 'LS6 3AA',
         ]);
 
         $response->assertCreated();

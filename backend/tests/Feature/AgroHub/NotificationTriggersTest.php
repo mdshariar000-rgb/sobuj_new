@@ -29,7 +29,7 @@ class NotificationTriggersTest extends TestCase
     public function test_liking_someone_elses_post_notifies_the_author_and_pushes_to_their_devices(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
         DeviceToken::factory()->create(['user_id' => $author->id, 'token' => 'author-token']);
 
         $liker = User::factory()->create();
@@ -54,7 +54,7 @@ class NotificationTriggersTest extends TestCase
     public function test_liking_your_own_post_does_not_self_notify(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
         Sanctum::actingAs($author);
 
         $this->mock(PushSender::class, function ($mock) {
@@ -69,7 +69,7 @@ class NotificationTriggersTest extends TestCase
     public function test_reliking_an_already_liked_post_does_not_notify_again(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
         $liker = User::factory()->create();
         Sanctum::actingAs($liker);
 
@@ -84,7 +84,7 @@ class NotificationTriggersTest extends TestCase
     public function test_commenting_on_someone_elses_post_notifies_the_author(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
 
         $commenter = User::factory()->create();
         Sanctum::actingAs($commenter);
@@ -101,7 +101,7 @@ class NotificationTriggersTest extends TestCase
     public function test_commenting_on_your_own_post_does_not_self_notify(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
         Sanctum::actingAs($author);
 
         $this->postJson("/api/v1/posts/{$post->id}/comments", ['body' => 'My own thoughts'])->assertCreated();
@@ -114,7 +114,7 @@ class NotificationTriggersTest extends TestCase
     public function test_replying_to_a_comment_notifies_both_the_post_author_and_the_parent_comments_author(): void
     {
         $postAuthor = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $postAuthor->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $postAuthor->id]);
 
         $originalCommenter = User::factory()->create();
         Sanctum::actingAs($originalCommenter);
@@ -148,7 +148,7 @@ class NotificationTriggersTest extends TestCase
     public function test_replying_when_the_parent_comments_author_is_the_post_author_creates_exactly_one_row(): void
     {
         $postAuthor = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $postAuthor->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $postAuthor->id]);
 
         Sanctum::actingAs($postAuthor);
         $original = $this->postJson("/api/v1/posts/{$post->id}/comments", ['body' => 'My own comment'])
@@ -173,7 +173,7 @@ class NotificationTriggersTest extends TestCase
     public function test_replying_to_your_own_comment_does_not_self_notify_for_the_reply(): void
     {
         $postAuthor = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $postAuthor->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $postAuthor->id]);
 
         $commenter = User::factory()->create();
         Sanctum::actingAs($commenter);
@@ -213,7 +213,8 @@ class NotificationTriggersTest extends TestCase
             'actor_id' => $buyer->id,
             'type' => NotificationType::SwapMessageReceived->value,
         ]);
-        $this->assertDatabaseCount('app_notifications', 1);
+        // The seller's other notification is the new offer itself.
+        $this->assertDatabaseCount('app_notifications', 2);
 
         // The seller replies — the buyer (not the seller) gets notified this time.
         Sanctum::actingAs($seller);
@@ -258,7 +259,7 @@ class NotificationTriggersTest extends TestCase
     public function test_an_invalid_device_token_reported_by_the_push_sender_is_pruned(): void
     {
         $author = User::factory()->create();
-        $post = Post::factory()->create(['author_id' => $author->id, 'group_id' => null]);
+        $post = Post::factory()->create(['author_id' => $author->id]);
         DeviceToken::factory()->create(['user_id' => $author->id, 'token' => 'dead-token']);
 
         $liker = User::factory()->create();

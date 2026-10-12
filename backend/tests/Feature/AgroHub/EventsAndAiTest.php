@@ -2,12 +2,9 @@
 
 namespace Tests\Feature\AgroHub;
 
-use App\Enums\AiMessageRole;
 use App\Enums\EventAttendeeStatus;
 use App\Enums\EventFormat;
 use App\Enums\EventStatus;
-use App\Models\AiConversation;
-use App\Models\AiMessage;
 use App\Models\Event;
 use App\Models\Group;
 use App\Models\User;
@@ -69,38 +66,5 @@ class EventsAndAiTest extends TestCase
         $event->delete();
 
         $this->assertDatabaseMissing('event_attendees', ['event_id' => $event->id]);
-    }
-
-    public function test_an_ai_conversation_holds_an_ordered_mixed_role_message_thread(): void
-    {
-        $conversation = AiConversation::factory()->create();
-
-        $userMessage = AiMessage::factory()->for($conversation, 'conversation')->create([
-            'role' => AiMessageRole::User,
-            'body' => 'Why are my tomato leaves curling?',
-        ]);
-
-        $assistantMessage = AiMessage::factory()->for($conversation, 'conversation')->create([
-            'role' => AiMessageRole::Assistant,
-            'body' => 'That can be heat stress or aphids — can you share a photo of the leaf?',
-        ]);
-
-        $messages = $conversation->fresh()->messages()->orderBy('created_at')->get();
-
-        $this->assertCount(2, $messages);
-        $this->assertSame(AiMessageRole::User, $messages->first()->role);
-        $this->assertSame($userMessage->id, $messages->first()->id);
-        $this->assertSame(AiMessageRole::Assistant, $messages->last()->role);
-        $this->assertSame($assistantMessage->id, $messages->last()->id);
-    }
-
-    public function test_an_ai_message_can_carry_a_leaf_diagnosis_photo(): void
-    {
-        $message = AiMessage::factory()->create([
-            'role' => AiMessageRole::User,
-            'image_path' => 'ai-uploads/leaf-123.jpg',
-        ]);
-
-        $this->assertSame('ai-uploads/leaf-123.jpg', $message->fresh()->image_path);
     }
 }

@@ -18,13 +18,12 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use Laravel\Cashier\Billable;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use Billable, HasApiTokens, HasFactory, HasFuzzyLocation, Notifiable;
+    use HasApiTokens, HasFactory, HasFuzzyLocation, Notifiable;
 
     /**
      * The attributes that are mass assignable.
@@ -54,6 +53,11 @@ class User extends Authenticatable implements FilamentUser
         'bio',
         'phone',
         'location_label',
+        'address_line1',
+        'address_line2',
+        'address_city',
+        'address_county',
+        'address_postcode',
         'growing_interests',
         'show_handover_radius',
     ];
@@ -89,24 +93,12 @@ class User extends Authenticatable implements FilamentUser
             'growing_setup' => GrowingSetup::class,
             'is_admin' => 'boolean',
             'is_suspended' => 'boolean',
+            'has_password' => 'boolean',
             'suspended_until' => 'datetime',
             'verified_at' => 'datetime',
             'growing_interests' => 'array',
             'show_handover_radius' => 'boolean',
-            'trial_ends_at' => 'datetime',
         ];
-    }
-
-    /**
-     * Whether this user currently has paid (or trialing) access to the
-     * Agri-AI Assistant — see AiConversationPolicy. Backed entirely by
-     * Cashier's own `subscriptions` table (via the Billable trait above,
-     * kept in sync by Stripe webhooks), not a separate status column, so
-     * there's nothing here that can drift out of sync with Stripe itself.
-     */
-    public function hasAgriAiAccess(): bool
-    {
-        return $this->subscribed('default');
     }
 
     /**
@@ -262,14 +254,6 @@ class User extends Authenticatable implements FilamentUser
     }
 
     /**
-     * @return HasMany<AiConversation>
-     */
-    public function aiConversations(): HasMany
-    {
-        return $this->hasMany(AiConversation::class);
-    }
-
-    /**
      * This user's real in-app notification inbox — see AppNotification for
      * why it isn't named notifications()/backed by the dormant Notifiable
      * trait already `use`d above.
@@ -298,6 +282,36 @@ class User extends Authenticatable implements FilamentUser
     public function blockedUsers(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'user_blocks', 'blocker_id', 'blocked_id')
+            ->withPivot('created_at');
+    }
+
+    /**
+     * Growers this account follows. The pivot only carries `created_at`, so
+     * timestamps aren't auto-managed — pass it explicitly when attaching.
+     * Unlike group membership, following carries no role/approval — it's a
+     * one-way social signal only (see FollowController).
+     *
+     * @return BelongsToMany<User>
+     */
+    public function searchHistories(): HasMany
+    {
+        return $this->hasMany(SearchHistory::class);
+    }
+
+    public function following(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'user_follows', 'follower_id', 'followed_id')
+            ->withPivot('created_at');
+    }
+
+    /**
+     * Growers who follow this account — the inverse of following().
+     *
+     * @return BelongsToMany<User>
+     */
+    public function followers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'user_follows', 'followed_id', 'follower_id')
             ->withPivot('created_at');
     }
 

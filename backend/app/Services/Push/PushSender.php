@@ -5,7 +5,7 @@ namespace App\Services\Push;
 /**
  * Thin seam between NotificationService and whatever actually delivers a
  * push — lets tests substitute a fake instead of ever calling real Firebase,
- * same precedent as StripePriceService being mocked in ManageSettingsTest.
+ * so the automated suite never sends a real push.
  */
 interface PushSender
 {

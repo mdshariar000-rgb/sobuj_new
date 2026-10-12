@@ -8,6 +8,17 @@ class AppConfig {
     defaultValue: 'https://codecell.site/api/v1',
   );
 
+  /// The public website the API lives on — share links point here.
+  static String get webBaseUrl =>
+      apiBaseUrl.replaceFirst(RegExp(r'/api/v\d+/?$'), '');
+
+  /// The page behind a listing's Share button: a preview plus links to get
+  /// the app (see SharePageController on the backend).
+  static String listingShareUrl(int listingId) => '$webBaseUrl/l/$listingId';
+
+  /// The page behind a profile's Share button.
+  static String profileShareUrl(int userId) => '$webBaseUrl/u/$userId';
+
   /// The Reverb app key used by the chat thread's live WebSocket connection —
   /// a public identifier (not a secret), the same one already embedded in
   /// the web build via Vite's VITE_REVERB_APP_KEY.

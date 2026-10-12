@@ -6,7 +6,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Agro Hub Privacy Policy')),
+      appBar: AppBar(title: const Text('Shobuj Privacy Policy')),
       body: const SingleChildScrollView(
         padding: EdgeInsets.all(20),
         child: Column(
@@ -19,8 +19,8 @@ class PrivacyPolicyScreen extends StatelessWidget {
             SizedBox(height: 8),
             Text(
               'Your name, email, and password; an approximate device location; '
-              'and anything you post — group posts, comments, events, and '
-              'messages to the Agri-AI Assistant, including photos you choose '
+              'and anything you post — group posts, comments, events, '
+              'marketplace listings and messages, including photos you choose '
               'to share.',
             ),
             SizedBox(height: 20),
@@ -43,13 +43,10 @@ class PrivacyPolicyScreen extends StatelessWidget {
             ),
             SizedBox(height: 8),
             Text(
-              "A photo or message you send to the Agri-AI Assistant is sent to "
-              "Google's Gemini API to generate a response — we ask for your "
-              'permission before this happens the first time. Push '
-              "notifications are delivered through Google's Firebase Cloud "
-              'Messaging, and subscription payments are handled by Stripe. '
-              'No other content is shared with third parties, and we do not '
-              'sell your data or use it for advertising.',
+              'Push notifications are delivered through Google\'s Firebase '
+              'Cloud Messaging. No other content is shared with third '
+              'parties, and we do not sell your data or use it for '
+              'advertising.',
             ),
             SizedBox(height: 20),
             Text(

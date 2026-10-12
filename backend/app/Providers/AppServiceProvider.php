@@ -2,9 +2,9 @@
 
 namespace App\Providers;
 
-use App\Models\Setting;
 use App\Services\Push\FcmPushSender;
 use App\Services\Push\PushSender;
+use App\Support\MailSettings;
 use Illuminate\Support\ServiceProvider;
 use Intervention\Image\ImageManager;
 
@@ -22,8 +22,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(ImageManager::class, fn () => ImageManager::gd());
 
         // Tests bind a fake PushSender instead — see NotificationService,
-        // never send a real push in the automated suite (same precedent as
-        // StripePriceService being mocked rather than hitting real Stripe).
+        // never send a real push in the automated suite.
         $this->app->bind(PushSender::class, FcmPushSender::class);
     }
 
@@ -32,18 +31,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // A key saved via the admin Settings page (app/Filament/Pages/ManageSettings.php)
-        // always wins over .env — same reasoning as the Gemini key in AgriAssistantService,
-        // but Cashier reads its own config directly (Cashier::stripe(), the Billable trait,
-        // and its auto-registered /stripe/webhook route all pull from config('cashier.*')
-        // rather than taking an injected client), so the overlay has to happen here instead
-        // of at the call site. Cashier::stripe() re-reads config on every call rather than
-        // caching a client for the process lifetime, so overlaying it once per request here
-        // is sufficient — verified against vendor/laravel/cashier/src/Cashier.php.
-        config([
-            'cashier.key' => Setting::get('stripe_publishable_key') ?: config('cashier.key'),
-            'cashier.secret' => Setting::get('stripe_secret_key') ?: config('cashier.secret'),
-            'cashier.webhook.secret' => Setting::get('stripe_webhook_secret') ?: config('cashier.webhook.secret'),
-        ]);
+        // SMTP saved on the admin Settings page beats .env. Applied when the
+        // mailer is first needed, so requests that send no mail don't pay
+        // for the lookup.
+        $this->app->afterResolving('mail.manager', fn () => MailSettings::apply());
     }
 }

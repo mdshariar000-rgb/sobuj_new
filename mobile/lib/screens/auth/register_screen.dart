@@ -3,16 +3,20 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/enums.dart';
+import '../../models/uk_address.dart';
+import '../../models/uk_location.dart';
+import '../../widgets/uk_address_fields.dart';
 import '../../providers/auth_providers.dart';
-import '../../providers/location_providers.dart';
+import '../../providers/onboarding_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
 import '../legal/privacy_policy_screen.dart';
 import '../legal/terms_screen.dart';
 import 'widgets/auth_error_banner.dart';
 import 'widgets/farming_interest_grid.dart';
-import 'widgets/location_capture_field.dart';
+import 'widgets/interest_chips.dart';
 import 'widgets/password_strength_meter.dart';
+import 'widgets/social_sign_in_buttons.dart';
 
 class RegisterScreen extends ConsumerStatefulWidget {
   const RegisterScreen({super.key});
@@ -27,11 +31,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _locationLabelController = TextEditingController();
   final _locationFieldKey = GlobalKey();
 
   ExperienceLevel? _experienceLevel;
   GrowingSetup? _growingSetup;
+  final Set<String> _interests = {};
+  final _address = UkAddressFormController();
+  String? _postcodeError;
   bool _agreedToTerms = false;
 
   bool _isSubmitting = false;
@@ -52,24 +58,12 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _locationLabelController.dispose();
+    _address.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-
-    // valueOrNull, not value — AsyncValue.value rethrows the underlying error
-    // when the provider is in an error state, which is exactly the case this
-    // check exists to handle gracefully.
-    final position = ref.read(deviceLocationProvider).valueOrNull;
-    if (position == null) {
-      setState(
-        () => _errorMessage =
-            "We need your location before you can sign up — see above.",
-      );
-      return;
-    }
 
     if (!_agreedToTerms) {
       setState(() => _errorMessage = 'Please agree to the terms to continue.');
@@ -80,8 +74,32 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       _isSubmitting = true;
       _errorMessage = null;
       _fieldErrors = null;
+      _postcodeError = null;
     });
 
+    // The postcode gives the account its map location and town.
+    final ({UkAddress address, UkLocation location}) resolved;
+    try {
+      resolved = await resolveUkAddress(ref, _address);
+    } on UnknownPostcodeException catch (e) {
+      setState(() {
+        _postcodeError = e.message;
+        _isSubmitting = false;
+      });
+      _scrollToLocationField();
+      return;
+    } catch (_) {
+      setState(() {
+        _errorMessage = "Couldn't check your postcode. Please try again.";
+        _isSubmitting = false;
+      });
+      return;
+    }
+    final location = resolved.location;
+
+    // Set before registering, so the moment the account exists AuthGate
+    // goes straight to onboarding rather than flashing Home first.
+    ref.read(needsOnboardingProvider.notifier).state = true;
     try {
       await ref
           .read(authControllerProvider.notifier)
@@ -90,13 +108,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             email: _emailController.text.trim(),
             password: _passwordController.text,
             passwordConfirmation: _confirmPasswordController.text,
-            latitude: position.latitude,
-            longitude: position.longitude,
-            locationLabel: _locationLabelController.text.trim().isEmpty
-                ? null
-                : _locationLabelController.text.trim(),
+            latitude: location.latitude,
+            longitude: location.longitude,
+            locationLabel: location.label,
             experienceLevel: _experienceLevel?.value,
             growingSetup: _growingSetup?.value,
+            growingInterests: _interests.toList(),
+            address: resolved.address,
           );
       // AuthGate swaps its child to the signed-in shell once register() sets
       // the signed-in state, but this screen was reached via Navigator.push
@@ -111,17 +129,15 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
         _fieldErrors = e.fieldErrors;
       });
     } finally {
+      // Whatever went wrong, no account means no onboarding to show.
+      if (mounted && ref.read(authControllerProvider).valueOrNull == null) {
+        ref.read(needsOnboardingProvider.notifier).state = false;
+      }
       if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
   String? _serverError(String field) => _fieldErrors?[field]?.first;
-
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
-  }
 
   void _scrollToLocationField() {
     final context = _locationFieldKey.currentContext;
@@ -176,7 +192,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                             borderRadius: BorderRadius.circular(20),
                           ),
                           child: const Text(
-                            '🌱 AGRO HUB COMMUNITY',
+                            '🌱 SHOBUJ COMMUNITY',
                             style: TextStyle(
                               color: AppColors.mint,
                               fontSize: 11,
@@ -202,8 +218,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Connect with agronomists, track crop microclimates, '
-                      'and grow smarter with Agro Hub.',
+                      'Connecting communities through sustainable gardening '
+                      'and nature.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                         color: AppColors.textOnDarkMuted,
                       ),
@@ -232,32 +248,17 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           AuthErrorBanner(message: _errorMessage!),
                           const SizedBox(height: 16),
                         ],
-                        KeyedSubtree(
-                          key: _locationFieldKey,
-                          child: const LocationCaptureField(),
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            const _FieldLabel('Primary Location'),
-                            const Spacer(),
-                            Text(
-                              'optional',
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: AppColors.textMuted),
-                            ),
-                          ],
-                        ),
+                        const _FieldLabel('Your Address'),
                         const SizedBox(height: 6),
-                        TextFormField(
-                          key: const Key('register-location-label-field'),
-                          controller: _locationLabelController,
-                          textInputAction: TextInputAction.next,
-                          decoration: InputDecoration(
-                            hintText: 'e.g. Dhanmondi, Dhaka',
-                            prefixIcon: const Icon(Icons.place_outlined),
-                            errorText: _serverError('location_label'),
-                          ),
+                        UkAddressFields(
+                          key: _locationFieldKey,
+                          form: _address,
+                          enabled: !_isSubmitting,
+                          postcodeError:
+                              _postcodeError ??
+                              _serverError('address_postcode') ??
+                              _serverError('address_line1') ??
+                              _serverError('address_city'),
                         ),
                         const SizedBox(height: 20),
                         const _FieldLabel('Full Name'),
@@ -306,7 +307,28 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                         const SizedBox(height: 20),
                         Row(
                           children: [
-                            const _FieldLabel('Primary Farming Interest'),
+                            const _FieldLabel('What are your interests?'),
+                            const Spacer(),
+                            Text(
+                              'optional',
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(color: AppColors.textMuted),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        InterestChips(
+                          selected: _interests,
+                          onToggle: (interest) => setState(
+                            () => _interests.contains(interest)
+                                ? _interests.remove(interest)
+                                : _interests.add(interest),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            const _FieldLabel('Where do you grow?'),
                             const Spacer(),
                             Text(
                               'optional',
@@ -327,7 +349,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           decoration: const InputDecoration(
                             labelText: 'Experience level (optional)',
                           ),
+                          // Expert stays in the enum so existing accounts
+                          // still load, but new sign-ups can't pick it.
                           items: ExperienceLevel.values
+                              .where((level) => level != ExperienceLevel.expert)
                               .map(
                                 (level) => DropdownMenuItem(
                                   value: level,
@@ -448,7 +473,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                                       ),
                                       const TextSpan(text: ' terms and '),
                                       TextSpan(
-                                        text: 'Agro Hub Privacy Policy',
+                                        text: 'Shobuj Privacy Policy',
                                         style: const TextStyle(
                                           color: AppColors.primary,
                                           fontWeight: FontWeight.w700,
@@ -497,51 +522,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                           ),
                         ),
                         const SizedBox(height: 20),
-                        Row(
-                          children: [
-                            const Expanded(child: Divider()),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                              ),
-                              child: Text(
-                                'OR REGISTER WITH',
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(color: AppColors.textMuted),
-                              ),
-                            ),
-                            const Expanded(child: Divider()),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _isSubmitting
-                                    ? null
-                                    : () => _comingSoon('Google sign-up'),
-                                icon: const Text(
-                                  'G',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.primary,
-                                  ),
-                                ),
-                                label: const Text('Google'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: _isSubmitting
-                                    ? null
-                                    : () => _comingSoon('Apple sign-up'),
-                                icon: const Icon(Icons.apple, size: 20),
-                                label: const Text('Apple'),
-                              ),
-                            ),
-                          ],
+                        SocialSignInButtons(
+                          dividerLabel: 'OR REGISTER WITH',
+                          enabled: !_isSubmitting,
                         ),
                         const SizedBox(height: 20),
                         TextButton(

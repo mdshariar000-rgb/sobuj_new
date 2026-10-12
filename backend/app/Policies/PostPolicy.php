@@ -39,7 +39,7 @@ class PostPolicy
             return false;
         }
 
-        if ($post->group_id === null || $post->approval_status === PostApprovalStatus::Approved) {
+        if ($post->approval_status === PostApprovalStatus::Approved) {
             return true;
         }
 

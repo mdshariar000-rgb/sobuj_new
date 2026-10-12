@@ -5,6 +5,7 @@ namespace App\Http\Resources;
 use App\Models\Group;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -41,7 +42,32 @@ class GroupResource extends JsonResource
                 array_key_exists('posts_today_count', $this->resource->getAttributes()),
                 fn () => (int) $this->posts_today_count,
             ),
-            'creator' => new UserResource($this->whenLoaded('creator')),
+            // Only on GET /groups/suggested: members from the viewer's city,
+            // and whether the group is for that city (named after it or has
+            // members there) — see GroupController::suggested().
+            'local_members_count' => $this->when(
+                array_key_exists('local_members_count', $this->resource->getAttributes()),
+                fn () => (int) $this->local_members_count,
+            ),
+            // Only on GET /groups: when anyone last posted or chatted there.
+            'last_activity_at' => $this->when(
+                array_key_exists('last_activity_at', $this->resource->getAttributes()),
+                fn () => $this->last_activity_at !== null
+                    ? Carbon::parse($this->last_activity_at)->toIso8601String()
+                    : null,
+            ),
+            'is_local' => $this->when(
+                array_key_exists('named_after_city', $this->resource->getAttributes()),
+                fn () => (bool) $this->named_after_city || (int) $this->local_members_count > 0,
+            ),
+            // Null for groups the app made earlier at sign-up (see AutoGroupService).
+            'creator' => $this->whenLoaded(
+                'creator',
+                fn () => $this->creator !== null ? new UserResource($this->creator) : null,
+            ),
+            'auto_type' => $this->auto_type,
+            // Set on an event's chat group — see EventChatService.
+            'event_id' => $this->event_id,
             // Two ways this gets populated depending on the endpoint: index() uses
             // withExists() (a cheap correlated-subquery bool, aliased onto this same
             // `is_member` attribute — see GroupController::index()); show()/store()/

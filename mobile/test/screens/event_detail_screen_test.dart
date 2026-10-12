@@ -160,29 +160,28 @@ void main() {
     expect(find.text('Cancel RSVP'), findsOneWidget);
   });
 
-  testWidgets(
-    'tapping "Just interested" calls the API with interested',
-    (tester) async {
-      final event = _buildEvent(id: 1, title: 'Compost Workshop');
-      final fakeClient = FakeApiClient()
-        ..rsvpToEventResult = _buildEvent(
-          id: 1,
-          title: 'Compost Workshop',
-          myRsvpStatus: EventAttendeeStatus.interested,
-        );
+  testWidgets('tapping "Just interested" calls the API with interested', (
+    tester,
+  ) async {
+    final event = _buildEvent(id: 1, title: 'Compost Workshop');
+    final fakeClient = FakeApiClient()
+      ..rsvpToEventResult = _buildEvent(
+        id: 1,
+        title: 'Compost Workshop',
+        myRsvpStatus: EventAttendeeStatus.interested,
+      );
 
-      await _pumpEventDetail(tester, fakeClient, event);
+    await _pumpEventDetail(tester, fakeClient, event);
 
-      final interestedLink = find.text('Just interested, not going yet?');
-      await tester.ensureVisible(interestedLink);
-      await tester.pumpAndSettle();
-      await tester.tap(interestedLink);
-      await tester.pumpAndSettle();
+    final interestedLink = find.text('Just interested, not going yet?');
+    await tester.ensureVisible(interestedLink);
+    await tester.pumpAndSettle();
+    await tester.tap(interestedLink);
+    await tester.pumpAndSettle();
 
-      expect(fakeClient.lastRsvpStatus, EventAttendeeStatus.interested);
-      expect(find.text("You're Interested"), findsOneWidget);
-    },
-  );
+    expect(fakeClient.lastRsvpStatus, EventAttendeeStatus.interested);
+    expect(find.text("You're Interested"), findsOneWidget);
+  });
 
   testWidgets('canceling an RSVP calls the API', (tester) async {
     final event = _buildEvent(

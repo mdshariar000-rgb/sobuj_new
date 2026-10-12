@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\ListingCondition;
 use App\Enums\ListingStatus;
+use App\Enums\SwapOfferStatus;
 use App\Enums\TransactionType;
 use App\Models\Concerns\HasFuzzyLocation;
 use Database\Factories\ListingFactory;
@@ -13,6 +14,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\DB;
 
 class Listing extends Model
 {
@@ -30,6 +32,8 @@ class Listing extends Model
         'listing_type',
         'transaction_type',
         'price',
+        'quantity',
+        'contact',
         'status',
         'looking_for',
         'handover_note',
@@ -60,6 +64,7 @@ class Listing extends Model
             'status' => ListingStatus::class,
             'condition' => ListingCondition::class,
             'price' => 'decimal:2',
+            'quantity' => 'integer',
             'is_flagged' => 'boolean',
             'banned_at' => 'datetime',
         ];
@@ -100,10 +105,55 @@ class Listing extends Model
     }
 
     /**
+     * @return HasMany<ListingReview>
+     */
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(ListingReview::class);
+    }
+
+    /**
      * Free-text filter against title/variety/looking_for, for the Discovery search bar.
      * A plain LIKE scan is fine here since it only ever runs against a result set
      * already narrowed by scopeNearby() + status/type filters, not the whole table.
      */
+    /**
+     * Whether $user may review this listing: only someone who completed a
+     * deal for it, so every review comes from a real exchange.
+     */
+    public function canBeReviewedBy(User $user): bool
+    {
+        return (int) $this->user_id !== $user->id
+            && $this->swapOffers()
+                ->where('requester_id', $user->id)
+                ->where('status', SwapOfferStatus::Completed)
+                ->exists();
+    }
+
+    /**
+     * Active listings [viewer] may see in feeds and search: not banned, not
+     * from anyone blocked either way or suspended — with fuzzy coordinates,
+     * the viewer's is_saved flag, photos and owner.
+     */
+    public function scopeBrowsableBy(Builder $query, User $viewer): Builder
+    {
+        return $query
+            ->where('listings.status', ListingStatus::Active)
+            ->whereNull('listings.banned_at')
+            ->whereNotIn('listings.user_id', $viewer->hiddenUserIds())
+            ->whereHas('user', fn ($query) => $query->where(fn ($query) => $query
+                ->where('is_suspended', false)
+                ->orWhere('suspended_until', '<', now())))
+            ->selectFuzzyCoordinates()
+            ->addSelect(['is_saved' => DB::table('saved_listings')
+                ->selectRaw('1')
+                ->whereColumn('listing_id', 'listings.id')
+                ->where('user_id', $viewer->id)
+                ->limit(1),
+            ])
+            ->with(['photos', 'user']);
+    }
+
     public function scopeSearch(Builder $query, string $term): Builder
     {
         $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $term).'%';

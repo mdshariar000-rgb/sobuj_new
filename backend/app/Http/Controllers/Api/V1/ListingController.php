@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\ListingStatus;
+use App\Enums\MessageType;
+use App\Enums\SwapOfferStatus;
+use App\Events\MessageSent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Listing\StoreListingRequest;
 use App\Http\Requests\Listing\UpdateListingRequest;
@@ -78,6 +81,8 @@ class ListingController extends Controller
                 'listing_type' => $data['listing_type'],
                 'transaction_type' => $data['transaction_type'],
                 'price' => $data['price'] ?? null,
+                'quantity' => $data['quantity'] ?? null,
+                'contact' => $data['contact'] ?? null,
                 'looking_for' => $data['looking_for'] ?? null,
                 'handover_note' => $data['handover_note'] ?? null,
             ]);
@@ -115,10 +120,12 @@ class ListingController extends Controller
         }
 
         $listing->loadMissing(['photos', 'user']);
+        $listing->loadCount('reviews')->loadAvg('reviews', 'rating');
         $listing->setAttribute(
             'is_saved',
             $listing->savedBy()->where('user_id', $request->user()->id)->exists(),
         );
+        $listing->setAttribute('can_review', $listing->canBeReviewedBy($request->user()));
 
         return new ListingResource($listing);
     }
@@ -152,18 +159,29 @@ class ListingController extends Controller
         DB::transaction(function () use ($data, $listing, $request, $imageService) {
             $listing->fill(array_intersect_key($data, array_flip([
                 'title', 'variety', 'description', 'condition', 'listing_type', 'transaction_type',
-                'price', 'looking_for', 'handover_note', 'status',
+                'price', 'quantity', 'contact', 'looking_for', 'handover_note', 'status',
             ])));
 
             if (isset($data['latitude'], $data['longitude'])) {
                 $listing->setLocation((float) $data['latitude'], (float) $data['longitude']);
             }
 
+            $closing = $listing->isDirty('status')
+                && in_array($listing->status, [ListingStatus::Completed, ListingStatus::Deleted], true);
+
             $listing->save();
+
+            if (! empty($data['remove_photo_ids'])) {
+                $listing->photos()->whereIn('id', $data['remove_photo_ids'])->delete();
+            }
 
             if ($request->hasFile('photos')) {
                 $nextOrder = ($listing->photos()->max('sort_order') ?? -1) + 1;
                 $this->storePhotos($listing, $request->file('photos'), $imageService, startingAt: $nextOrder);
+            }
+
+            if ($closing) {
+                $this->closeOpenOffers($listing);
             }
         });
 
@@ -178,7 +196,10 @@ class ListingController extends Controller
     {
         $this->authorize('delete', $listing);
 
-        $listing->update(['status' => ListingStatus::Deleted]);
+        DB::transaction(function () use ($listing) {
+            $listing->update(['status' => ListingStatus::Deleted]);
+            $this->closeOpenOffers($listing);
+        });
 
         return response()->json(['message' => 'Listing deleted.']);
     }
@@ -207,6 +228,28 @@ class ListingController extends Controller
     /**
      * @param  array<int, UploadedFile>  $files
      */
+    /**
+     * When the seller marks a listing sold or deletes it, every deal still
+     * open on it is declined, with a note in its chat — same as completing
+     * one deal does in SwapOfferController::syncListingStatus().
+     */
+    private function closeOpenOffers(Listing $listing): void
+    {
+        $open = $listing->swapOffers()
+            ->whereIn('status', [SwapOfferStatus::Pending, SwapOfferStatus::Countered, SwapOfferStatus::Accepted])
+            ->get();
+
+        foreach ($open as $offer) {
+            $offer->update(['status' => SwapOfferStatus::Declined]);
+            $message = $offer->messages()->create([
+                'sender_id' => null,
+                'message_type' => MessageType::SystemEvent,
+                'body' => "\"{$listing->title}\" is no longer available.",
+            ]);
+            broadcast(new MessageSent($message));
+        }
+    }
+
     private function storePhotos(Listing $listing, array $files, ImageService $imageService, int $startingAt): void
     {
         foreach (array_values($files) as $index => $file) {

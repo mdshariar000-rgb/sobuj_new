@@ -1,13 +1,19 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../../models/post.dart';
 import '../../../models/report.dart';
+import '../../../providers/core_providers.dart';
+import '../../../services/api_exception.dart';
 import '../../../theme/app_colors.dart';
 import '../../../widgets/safety_actions.dart';
 import '../../../widgets/user_avatar.dart';
 import '../../discovery/seller_profile_screen.dart';
+import '../../groups/group_detail_screen.dart';
+import '../../../widgets/image_decode.dart';
 
 class PostCard extends StatelessWidget {
   const PostCard({
@@ -19,9 +25,14 @@ class PostCard extends StatelessWidget {
     this.onLike,
     this.onApprove,
     this.onReject,
+    this.showGroupLabel = true,
   });
 
   final Post post;
+
+  /// Off inside a group's own discussion thread, where "in `group`" on
+  /// every post would just repeat the screen's title.
+  final bool showGroupLabel;
   final VoidCallback? onTap;
 
   /// Only passed non-null by a caller that has already confirmed this is
@@ -122,14 +133,46 @@ class PostCard extends StatelessWidget {
                               color: AppColors.textMuted,
                             ),
                           ),
+                          if (showGroupLabel && post.groupName != null)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: GestureDetector(
+                                key: const Key('post-group-label'),
+                                behavior: HitTestBehavior.opaque,
+                                onTap: post.groupId == null
+                                    ? null
+                                    : () => openGroupDetail(
+                                        context,
+                                        post.groupId!,
+                                      ),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.groups_outlined,
+                                      size: 14,
+                                      color: AppColors.primary,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Flexible(
+                                      child: Text(
+                                        'in ${post.groupName}',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              color: AppColors.primary,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   ),
-                  if (post.category.toLowerCase() != 'general') ...[
-                    _CategoryBadge(category: post.category),
-                    const SizedBox(width: 4),
-                  ],
                   if (post.isPendingApproval || post.isRejected)
                     _ApprovalBadge(isRejected: post.isRejected),
                   if (onEdit == null && onDelete == null && post.author != null)
@@ -190,8 +233,7 @@ class PostCard extends StatelessWidget {
                       onSelected: (action) => switch (action) {
                         _PostMenuAction.edit => onEdit?.call(),
                         _PostMenuAction.delete => onDelete?.call(),
-                        _PostMenuAction.report ||
-                        _PostMenuAction.block => null,
+                        _PostMenuAction.report || _PostMenuAction.block => null,
                       },
                       itemBuilder: (context) => [
                         if (onEdit != null)
@@ -223,7 +265,8 @@ class PostCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              Text(post.body, style: theme.textTheme.bodyMedium),
+              if (post.body.isNotEmpty)
+                Text(post.body, style: theme.textTheme.bodyMedium),
               if (post.imageUrl != null) ...[
                 const SizedBox(height: 10),
                 ClipRRect(
@@ -232,6 +275,7 @@ class PostCard extends StatelessWidget {
                     imageUrl: post.imageUrl!,
                     width: double.infinity,
                     height: 180,
+                    memCacheWidth: decodeWidthFor(context, double.infinity),
                     fit: BoxFit.cover,
                     placeholder: (context, _) =>
                         Container(height: 180, color: AppColors.surfaceMuted),
@@ -262,11 +306,29 @@ class PostCard extends StatelessWidget {
                   _CountButton(
                     icon: Icons.mode_comment_outlined,
                     iconColor: AppColors.textMuted,
-                    label: '${post.commentsCount ?? 0} comments',
+                    label: (post.commentsCount ?? 0) == 1
+                        ? '1 comment'
+                        : '${post.commentsCount ?? 0} comments',
                     onTap: onTap,
                   ),
-                  if (onApprove != null || onReject != null) ...[
-                    const Spacer(),
+                  if (post.canShare) ...[
+                    const SizedBox(width: 4),
+                    _CountButton(
+                      key: Key('post-share-${post.id}'),
+                      icon: Icons.share_outlined,
+                      iconColor: AppColors.textMuted,
+                      label: 'Share',
+                      onTap: () => sharePostOutside(post),
+                    ),
+                  ],
+                ],
+              ),
+              // Moderation actions get their own row — beside Like/Comment/
+              // Share they don't fit on a phone-width card.
+              if (onApprove != null || onReject != null)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
                     if (onReject != null)
                       TextButton.icon(
                         onPressed: onReject,
@@ -286,58 +348,10 @@ class PostCard extends StatelessWidget {
                         ),
                       ),
                   ],
-                ],
-              ),
+                ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// A small colored pill marking a non-General post so it stands out on the
-/// unfiltered "Recent" feed too, not just when the matching chip is
-/// selected. category is an admin-managed name (see models/post_category.dart),
-/// not a fixed set, so the icon is a best-effort substring match — same
-/// heuristic as GroupCard's own category icon — rather than an exhaustive
-/// switch that would miss any category an admin adds later.
-class _CategoryBadge extends StatelessWidget {
-  const _CategoryBadge({required this.category});
-
-  final String category;
-
-  @override
-  Widget build(BuildContext context) {
-    final lower = category.toLowerCase();
-    final (icon, color) = switch (lower) {
-      _ when lower.contains('disease') || lower.contains('alert') => (
-        Icons.warning_amber_rounded,
-        Colors.orange,
-      ),
-      _ when lower.contains('harvest') => (Icons.eco, AppColors.primary),
-      _ => (Icons.local_offer_outlined, AppColors.textMuted),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 13, color: color),
-          const SizedBox(width: 4),
-          Text(
-            category,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: color,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -391,6 +405,7 @@ class _ApprovalBadge extends StatelessWidget {
 /// same bug). A plain InkWell sidesteps it entirely.
 class _CountButton extends StatelessWidget {
   const _CountButton({
+    super.key,
     required this.icon,
     required this.iconColor,
     required this.label,
@@ -429,6 +444,25 @@ class _CountButton extends StatelessWidget {
 
 enum _PostMenuAction { edit, delete, report, block }
 
+/// Opens a group's detail page from a post's "in `group`" label. The post
+/// only carries the group's basics, so the full group (with the viewer's
+/// membership and role) is fetched first.
+Future<void> openGroupDetail(BuildContext context, int groupId) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final navigator = Navigator.of(context);
+  try {
+    final group = await ProviderScope.containerOf(
+      context,
+      listen: false,
+    ).read(apiClientProvider).group(groupId);
+    await navigator.push(
+      MaterialPageRoute(builder: (_) => GroupDetailScreen(group: group)),
+    );
+  } on ApiException catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text(e.message)));
+  }
+}
+
 /// Shared "delete post?" confirmation — used by every screen that shows a
 /// [PostCard] with a delete action, so the prompt reads the same everywhere.
 Future<bool> confirmDeletePost(BuildContext context) async {
@@ -436,9 +470,7 @@ Future<bool> confirmDeletePost(BuildContext context) async {
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Delete post?'),
-      content: const Text(
-        "This removes it for everyone and can't be undone.",
-      ),
+      content: const Text("This removes it for everyone and can't be undone."),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(false),
@@ -452,4 +484,14 @@ Future<bool> confirmDeletePost(BuildContext context) async {
     ),
   );
   return confirmed ?? false;
+}
+
+/// "Share" on a post: the phone's own share menu (WhatsApp, Messages, copy
+/// …) with who posted it, in which group, and what they said.
+void sharePostOutside(Post post) {
+  final author = post.author?.name ?? 'A grower';
+  final where = post.groupName != null ? ' in ${post.groupName}' : '';
+  SharePlus.instance.share(
+    ShareParams(text: '$author$where on Shobuj:\n\n${post.body}'),
+  );
 }

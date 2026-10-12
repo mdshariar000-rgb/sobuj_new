@@ -10,6 +10,7 @@ use App\Models\Listing;
 use App\Models\Message;
 use App\Models\Post;
 use App\Models\User;
+use Illuminate\Database\Eloquent\Model;
 
 enum ReportTargetType: string
 {
@@ -23,7 +24,7 @@ enum ReportTargetType: string
     case Message = 'message';
 
     /**
-     * @return class-string<\Illuminate\Database\Eloquent\Model>
+     * @return class-string<Model>
      */
     public function modelClass(): string
     {

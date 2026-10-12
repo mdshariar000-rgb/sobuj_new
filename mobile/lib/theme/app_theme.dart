@@ -24,6 +24,9 @@ abstract final class AppTheme {
       surfaceContainerHighest: AppColors.surfaceMuted,
       onSurfaceVariant: AppColors.textMuted,
       outline: AppColors.textOnDarkMuted,
+      // Dividers and tab-bar underlines use this; left unset it defaults to
+      // near-black, which drew harsh black lines across the app.
+      outlineVariant: AppColors.border,
       error: AppColors.error,
       onError: Colors.white,
     );

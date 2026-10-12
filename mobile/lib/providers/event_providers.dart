@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/event.dart';
+import '../models/event_review.dart';
 import '../models/event_category.dart';
 import '../models/event_enums.dart';
 import '../services/api_client.dart';
@@ -15,13 +16,22 @@ import 'core_providers.dart';
 /// EventController::index()'s `category` handling.
 final eventsCategoryProvider = StateProvider<String?>((ref) => null);
 
+/// The Events tab's search box — searched on the server (title, place,
+/// description, host), not just among the events already loaded.
+final eventsSearchProvider = StateProvider<String>((ref) => '');
+
 /// The admin-managed category list — both the Events tab's filter chips
 /// and the "create an event" form's category picker read from this single
 /// source of truth rather than each guessing at real values independently.
 final eventCategoriesProvider = FutureProvider.autoDispose<List<EventCategory>>(
   (ref) async {
     final apiClient = ref.watch(apiClientProvider);
-    return apiClient.eventCategories();
+    final categories = await apiClient.eventCategories();
+    // Admin-managed and rarely changes — keep it for the session once loaded,
+    // so the chips don't flash a spinner every time a screen opens. (A failed
+    // load isn't kept, so it retries next time.)
+    ref.keepAlive();
+    return categories;
   },
 );
 
@@ -52,21 +62,28 @@ class EventsListState {
 
 /// The Events & Workshops list — published events, soonest first. Same
 /// paginated + optimistic-mutation shape as GroupsListNotifier/
-/// HomeFeedNotifier.
+/// the other paginated lists.
 class EventsListNotifier extends StateNotifier<AsyncValue<EventsListState>> {
-  EventsListNotifier(this._apiClient, this._category)
-    : super(const AsyncValue.loading()) {
+  EventsListNotifier(this._apiClient, this._category, {String search = ''})
+    : _search = search,
+      super(const AsyncValue.loading()) {
     refresh();
   }
 
   final ApiClient _apiClient;
   final String? _category;
+  final String _search;
   int _page = 1;
 
   Future<void> refresh() async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
-      final response = await _apiClient.events(page: 1, category: _category);
+      final response = await _apiClient.events(
+        page: 1,
+        category: _category,
+        forYou: _category == null,
+        search: _search,
+      );
       _page = 1;
       return EventsListState(
         events: response.data,
@@ -85,6 +102,8 @@ class EventsListNotifier extends StateNotifier<AsyncValue<EventsListState>> {
       final response = await _apiClient.events(
         page: _page + 1,
         category: _category,
+        forYou: _category == null,
+        search: _search,
       );
       _page += 1;
       state = AsyncValue.data(
@@ -99,7 +118,10 @@ class EventsListNotifier extends StateNotifier<AsyncValue<EventsListState>> {
     }
   }
 
-  Future<void> createEvent({
+  /// Creates the event, or — with [existingEventId] — saves changes to
+  /// one (a draft being published, or an edit to a live event).
+  Future<Event> createEvent({
+    int? existingEventId,
     int? groupId,
     required String title,
     String? description,
@@ -110,27 +132,53 @@ class EventsListNotifier extends StateNotifier<AsyncValue<EventsListState>> {
     required DateTime startsAt,
     DateTime? endsAt,
     int? capacity,
+    double? registrationFee,
+    List<DateTime> proposedDates = const [],
     required EventStatus status,
   }) async {
-    final event = await _apiClient.createEvent(
-      groupId: groupId,
-      title: title,
-      description: description,
-      format: format,
-      category: category,
-      coverImage: coverImage,
-      location: location,
-      startsAt: startsAt,
-      endsAt: endsAt,
-      capacity: capacity,
-      status: status,
-    );
+    final event = existingEventId != null
+        ? await _apiClient.updateEvent(
+            existingEventId,
+            title: title,
+            description: description,
+            format: format,
+            category: category,
+            coverImage: coverImage,
+            location: location,
+            startsAt: startsAt,
+            endsAt: endsAt,
+            capacity: capacity,
+            registrationFee: registrationFee,
+            proposedDates: proposedDates,
+            status: status,
+          )
+        : await _apiClient.createEvent(
+            groupId: groupId,
+            title: title,
+            description: description,
+            format: format,
+            category: category,
+            coverImage: coverImage,
+            location: location,
+            startsAt: startsAt,
+            endsAt: endsAt,
+            capacity: capacity,
+            registrationFee: registrationFee,
+            proposedDates: proposedDates,
+            status: status,
+          );
     final current = state.valueOrNull;
     if (current != null && status == EventStatus.published) {
+      final alreadyListed = current.events.any((e) => e.id == event.id);
       state = AsyncValue.data(
-        current.copyWith(events: [event, ...current.events]),
+        current.copyWith(
+          events: alreadyListed
+              ? [for (final e in current.events) e.id == event.id ? event : e]
+              : [event, ...current.events],
+        ),
       );
     }
+    return event;
   }
 
   Future<void> rsvp(int eventId, EventAttendeeStatus status) async {
@@ -195,8 +243,27 @@ final eventsListProvider =
       (ref) => EventsListNotifier(
         ref.watch(apiClientProvider),
         ref.watch(eventsCategoryProvider),
+        search: ref.watch(eventsSearchProvider),
       ),
     );
+
+/// My events → Going: upcoming events the user said they're going to.
+final goingEventsProvider = FutureProvider.autoDispose<List<Event>>((
+  ref,
+) async {
+  final response = await ref.watch(apiClientProvider).events(going: true);
+  return response.data;
+});
+
+/// My events → Hosting: the user's own published events.
+final hostingEventsProvider = FutureProvider.autoDispose<List<Event>>((
+  ref,
+) async {
+  final response = await ref
+      .watch(apiClientProvider)
+      .myEvents(status: EventStatus.published);
+  return response.data;
+});
 
 /// The "Saved Events" list — every event the user has tapped the bookmark
 /// icon on. autoDispose so it's re-fetched fresh each time the screen opens
@@ -325,3 +392,21 @@ final eventDetailProvider = StateNotifierProvider.autoDispose
       (ref, event) =>
           EventDetailNotifier(ref.watch(apiClientProvider), event.id, event),
     );
+
+/// "My drafts" — the user's own unpublished events, most recently edited
+/// first.
+final myDraftEventsProvider = FutureProvider.autoDispose<List<Event>>((
+  ref,
+) async {
+  final apiClient = ref.watch(apiClientProvider);
+  final response = await apiClient.myEvents(status: EventStatus.draft);
+  return response.data;
+});
+
+/// Reviews and comments on one event, newest first.
+final eventReviewsProvider = FutureProvider.autoDispose
+    .family<List<EventReview>, int>((ref, eventId) async {
+      final apiClient = ref.watch(apiClientProvider);
+      final response = await apiClient.eventReviews(eventId);
+      return response.data;
+    });

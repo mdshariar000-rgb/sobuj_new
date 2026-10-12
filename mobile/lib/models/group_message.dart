@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 import 'app_user.dart';
+import 'message_images.dart';
+import 'message_reaction.dart';
+import 'message_reply.dart';
 
 /// Mirrors GroupMessageResource on the backend — a single message within a
 /// group's real-time chat.
@@ -12,12 +15,15 @@ class GroupMessage {
     required this.id,
     required this.groupId,
     this.body,
-    this.imageUrl,
+    this.imageUrls = const [],
     this.sender,
     this.senderIsAdmin,
     required this.createdAt,
     this.isPending = false,
-    this.localImage,
+    this.localImages = const [],
+    this.replyToId,
+    this.replyTo,
+    this.reactions = const [],
   });
 
   final int id;
@@ -26,8 +32,9 @@ class GroupMessage {
   /// Null for an image-only message with no caption.
   final String? body;
 
-  /// Set when this message carries a real uploaded photo.
-  final String? imageUrl;
+  /// Every uploaded photo on this message, in the order sent — empty for a
+  /// text-only message.
+  final List<String> imageUrls;
 
   /// Null for a message whose original sender has since deleted their
   /// account.
@@ -44,17 +51,49 @@ class GroupMessage {
   /// never true for anything that came from the backend.
   final bool isPending;
 
-  /// Set only on a pending message with an attached photo, before it has
-  /// been uploaded — lets the bubble show the picked photo immediately
-  /// instead of waiting for a server-hosted [imageUrl].
-  final File? localImage;
+  /// Set only on a pending message with attached photos, before they've
+  /// been uploaded — lets the bubble show the picked photos immediately
+  /// instead of waiting for server-hosted [imageUrls].
+  final List<File> localImages;
+
+  bool get hasImages => localImages.isNotEmpty || imageUrls.isNotEmpty;
+
+  /// Set when this message is a reply. [replyTo] is the quote to show; it's
+  /// null (with [replyToId] still set) when the quoted message was deleted
+  /// or is from someone blocked.
+  final int? replyToId;
+  final MessageReply? replyTo;
+
+  /// Emoji reactions, grouped by emoji — empty when there are none.
+  final List<MessageReaction> reactions;
+
+  /// This message with its reactions replaced — everything else unchanged.
+  GroupMessage withReactions(List<MessageReaction> reactions) {
+    return GroupMessage(
+      id: id,
+      groupId: groupId,
+      body: body,
+      imageUrls: imageUrls,
+      sender: sender,
+      senderIsAdmin: senderIsAdmin,
+      createdAt: createdAt,
+      isPending: isPending,
+      localImages: localImages,
+      replyToId: replyToId,
+      replyTo: replyTo,
+      reactions: reactions,
+    );
+  }
 
   factory GroupMessage.fromJson(Map<String, dynamic> json) {
     return GroupMessage(
       id: json['id'] as int,
       groupId: json['group_id'] as int,
       body: json['body'] as String?,
-      imageUrl: json['image_url'] as String?,
+      imageUrls: parseMessageImageUrls(json),
+      replyToId: parseOptionalId(json['reply_to_id']),
+      replyTo: MessageReply.tryFromJson(json['reply_to']),
+      reactions: MessageReaction.listFromJson(json['reactions']),
       sender: json['sender'] != null
           ? AppUser.fromJson(json['sender'] as Map<String, dynamic>)
           : null,

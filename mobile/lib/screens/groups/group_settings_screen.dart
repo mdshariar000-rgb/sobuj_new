@@ -353,7 +353,8 @@ class _GroupSettingsScreenState extends ConsumerState<GroupSettingsScreen> {
                         maxLength,
                       }) => null,
                   decoration: const InputDecoration(
-                    hintText: 'A cooperative space for regenerative gardeners...',
+                    hintText:
+                        'A cooperative space for regenerative gardeners...',
                   ),
                 ),
               ],

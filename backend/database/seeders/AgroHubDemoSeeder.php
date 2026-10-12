@@ -2,14 +2,12 @@
 
 namespace Database\Seeders;
 
-use App\Enums\AiMessageRole;
 use App\Enums\EventAttendeeStatus;
 use App\Enums\EventFormat;
 use App\Enums\EventStatus;
 use App\Enums\ExperienceLevel;
 use App\Enums\GroupMemberRole;
 use App\Enums\GrowingSetup;
-use App\Models\AiConversation;
 use App\Models\Comment;
 use App\Models\Event;
 use App\Models\Group;
@@ -20,14 +18,14 @@ use Illuminate\Support\Facades\Hash;
 
 /**
  * Populates the local dev database with enough realistic Agro Hub content
- * (groups, posts, comments, events, an AI chat history) to explore the app
+ * (groups, posts, comments, events) to explore the app
  * with — not used in tests (they run against `shobuj_testing`, a separate
  * database via .env.testing) and never run against production.
  *
  * Re-runnable: clears prior demo rows first rather than accumulating dupes
  * on repeat runs. Log in as demo@agrohub.test / password to see it all as
  * the "you" account — a member of some groups, host/attendee of some
- * events, with an existing AI conversation.
+ * events.
  */
 class AgroHubDemoSeeder extends Seeder
 {
@@ -104,7 +102,7 @@ class AgroHubDemoSeeder extends Seeder
 
         $this->command?->info('Creating posts and comments...');
 
-        $generalPostBodies = [
+        $postBodies = [
             'First tomatoes of the season are finally ripening! Cherry variety, grown from cuttings a neighbor gave me.',
             "Anyone else's basil bolting early this year? Trying to figure out if it's the heat or I'm watering wrong.",
             'Started composting kitchen scraps on the balcony three months ago — texture finally looks right. Small wins.',
@@ -115,11 +113,12 @@ class AgroHubDemoSeeder extends Seeder
             'Does anyone have luck growing ginger in containers here? Tried once and it barely sprouted.',
         ];
 
-        foreach ($generalPostBodies as $i => $body) {
+        foreach ($postBodies as $i => $body) {
             $author = $everyone[$i % $everyone->count()];
             $post = Post::factory()->create([
                 'author_id' => $author->id,
-                'group_id' => null,
+                // Posts live in groups — there's no personal timeline.
+                'group_id' => $groups[$i % $groups->count()]->id,
                 'body' => $body,
                 'created_at' => now()->subHours(random_int(1, 200)),
             ]);
@@ -197,34 +196,6 @@ class AgroHubDemoSeeder extends Seeder
                 ]);
             }
         }
-
-        $this->command?->info('Creating an Agri-AI conversation for the demo account...');
-
-        $conversation = AiConversation::factory()->create([
-            'user_id' => $demo->id,
-            'title' => 'Yellowing tomato leaves',
-        ]);
-
-        $conversation->messages()->create([
-            'role' => AiMessageRole::User,
-            'body' => 'My tomato leaves are turning yellow starting from the bottom of the plant. What could be causing this?',
-            'created_at' => now()->subDays(2),
-        ]);
-        $conversation->messages()->create([
-            'role' => AiMessageRole::Assistant,
-            'body' => "Bottom-up yellowing on tomatoes is usually one of a few things: nitrogen deficiency (most common as plants mature and fruit sets), overwatering/poor drainage, or early blight (look for brown spots with concentric rings on the yellowing leaves). Start by checking soil moisture — if it's staying wet, cut back on watering first. If leaves are yellow but spot-free, a balanced or nitrogen-leaning feed usually helps within a week or two.",
-            'created_at' => now()->subDays(2)->addMinutes(1),
-        ]);
-        $conversation->messages()->create([
-            'role' => AiMessageRole::User,
-            'body' => "No spots, and the soil does stay pretty wet — I think it's my pot's drainage. Any quick fix?",
-            'created_at' => now()->subDay(),
-        ]);
-        $conversation->messages()->create([
-            'role' => AiMessageRole::Assistant,
-            'body' => "That matches — poor drainage suffocates roots, which shows up as yellowing from the bottom. Quickest fix without repotting: elevate the pot slightly so it's not sitting in standing water, and check the drainage holes aren't blocked. If you can repot, add a layer of coarse material (broken pottery, gravel) at the base and use a chunkier, well-draining mix. Hold off on fertilizing until the roots recover — feeding stressed roots can make it worse.",
-            'created_at' => now()->subDay()->addMinutes(1),
-        ]);
 
         $this->command?->info('Done. Log in as demo@agrohub.test / password.');
     }

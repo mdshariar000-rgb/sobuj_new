@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../providers/discovery_providers.dart';
+import '../../../theme/app_colors.dart';
 
 class DiscoverySearchBar extends ConsumerStatefulWidget {
   const DiscoverySearchBar({super.key});
@@ -48,6 +49,10 @@ class _DiscoverySearchBarState extends ConsumerState<DiscoverySearchBar> {
 
   @override
   Widget build(BuildContext context) {
+    // A search can also start from Home's search bar — show its term here.
+    ref.listen(discoveryFiltersProvider.select((f) => f.searchTerm), (_, term) {
+      if (term != _controller.text) _controller.text = term;
+    });
     final hasText = ref.watch(
       discoveryFiltersProvider.select(
         (filters) => filters.searchTerm.isNotEmpty,
@@ -61,7 +66,7 @@ class _DiscoverySearchBarState extends ConsumerState<DiscoverySearchBar> {
         onChanged: _onChanged,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          hintText: 'Search seeds, plants, cuttings…',
+          hintText: 'Search seeds, plants, cuttings, tools…',
           prefixIcon: const Icon(Icons.search),
           suffixIcon: hasText
               ? IconButton(
@@ -71,9 +76,14 @@ class _DiscoverySearchBarState extends ConsumerState<DiscoverySearchBar> {
                 )
               : null,
           filled: true,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+          fillColor: AppColors.surfaceContainer,
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: AppColors.primary, width: 1.5),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: AppColors.primary, width: 2),
           ),
           contentPadding: const EdgeInsets.symmetric(
             vertical: 0,

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
@@ -219,10 +221,7 @@ void main() {
 
         final formData =
             verify(
-                  () => dio.post(
-                    '/auth/me',
-                    data: captureAny(named: 'data'),
-                  ),
+                  () => dio.post('/auth/me', data: captureAny(named: 'data')),
                 ).captured.single
                 as FormData;
         final field = formData.fields.firstWhere(
@@ -266,6 +265,65 @@ void main() {
       );
 
       expect(field.value, '1');
+    });
+  });
+
+  group('chat photos', () {
+    test('several photos are sent as images[] alongside the caption', () async {
+      final dir = await Directory.systemTemp.createTemp('chat-photos');
+      final photos = [
+        for (final name in ['a.jpg', 'b.jpg', 'c.jpg'])
+          await File('${dir.path}/$name').writeAsBytes([0xFF, 0xD8, 0xFF]),
+      ];
+      addTearDown(() => dir.delete(recursive: true));
+
+      when(() => dio.post(any(), data: any(named: 'data'))).thenAnswer(
+        (_) async => Response(
+          requestOptions: RequestOptions(path: '/groups/7/messages'),
+          statusCode: 201,
+          data: {
+            'data': {
+              'id': 1,
+              'group_id': 7,
+              'body': 'Harvest',
+              'image_url': 'https://x/a.jpg',
+              'image_urls': [
+                'https://x/a.jpg',
+                'https://x/b.jpg',
+                'https://x/c.jpg',
+              ],
+              'sender': null,
+              'created_at': '2026-09-30T10:00:00Z',
+            },
+          },
+        ),
+      );
+
+      final message = await client.sendGroupMessage(
+        7,
+        body: 'Harvest',
+        images: photos,
+        replyToId: 3,
+      );
+
+      final formData =
+          verify(
+                () => dio.post(
+                  '/groups/7/messages',
+                  data: captureAny(named: 'data'),
+                ),
+              ).captured.single
+              as FormData;
+      expect(formData.files.map((f) => f.key), [
+        'images[]',
+        'images[]',
+        'images[]',
+      ]);
+      expect(Map.fromEntries(formData.fields), {
+        'body': 'Harvest',
+        'reply_to_id': '3',
+      });
+      expect(message.imageUrls, hasLength(3));
     });
   });
 }

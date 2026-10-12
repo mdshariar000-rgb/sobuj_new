@@ -31,7 +31,7 @@ class NotificationsListState {
 }
 
 /// The Notifications inbox — paginated, newest first, same shape as
-/// EventsListNotifier/HomeFeedNotifier.
+/// EventsListNotifier/the other paginated lists.
 class NotificationsListNotifier
     extends StateNotifier<AsyncValue<NotificationsListState>> {
   NotificationsListNotifier(this._apiClient, this._ref)

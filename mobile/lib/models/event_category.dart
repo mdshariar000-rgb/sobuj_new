@@ -14,9 +14,6 @@ class EventCategory {
   final String name;
 
   factory EventCategory.fromJson(Map<String, dynamic> json) {
-    return EventCategory(
-      id: json['id'] as int,
-      name: json['name'] as String,
-    );
+    return EventCategory(id: json['id'] as int, name: json['name'] as String);
   }
 }

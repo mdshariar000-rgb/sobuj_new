@@ -13,22 +13,67 @@ use App\Http\Requests\Group\UpdateGroupRequest;
 use App\Http\Resources\GroupMemberResource;
 use App\Http\Resources\GroupResource;
 use App\Models\Group;
+use App\Models\User;
+use App\Services\AutoGroupService;
 use App\Services\ImageService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class GroupController extends Controller
 {
     private const PER_PAGE = 20;
 
+    /**
+     * GET /groups/suggested — public groups for the onboarding step, picked
+     * for the viewer's city: groups named after it first, then groups with
+     * the most members from there, then the biggest other groups to fill the
+     * list. Each group carries local_members_count (members from the same
+     * city) and is_local; the response's meta.city names the city used.
+     */
+    public function suggested(Request $request): AnonymousResourceCollection
+    {
+        $user = $request->user();
+        $city = $this->cityOf($user);
+
+        $groups = Group::query()
+            ->listed()
+            ->where('status', GroupStatus::Active)
+            ->where('visibility', GroupVisibility::Public)
+            ->withCount('members')
+            ->withExists(['members as is_member' => fn ($query) => $query->where('user_id', $user->id)]);
+
+        if ($city !== null) {
+            $this->addCityRanking($groups, $user, $city);
+            $groups->orderByDesc('named_after_city')->orderByDesc('local_members_count');
+        }
+
+        $groups = $groups
+            ->orderByDesc('members_count')
+            ->latest()
+            ->limit(20)
+            ->get();
+
+        return GroupResource::collection($groups)->additional(['meta' => ['city' => $city]]);
+    }
+
     public function index(Request $request): AnonymousResourceCollection
     {
+        $city = $this->cityOf($request->user());
+
         $groups = Group::query()
+            ->listed()
             ->where('status', GroupStatus::Active)
             ->when($request->filled('category'), fn ($query) => $query->where('category', $request->string('category')))
+            // The app's two tabs: groups the viewer is in, and the rest.
+            ->when($request->input('membership') === 'mine', fn ($query) => $query
+                ->whereHas('members', fn ($query) => $query->where('user_id', $request->user()->id)))
+            ->when($request->input('membership') === 'others', fn ($query) => $query
+                ->whereDoesntHave('members', fn ($query) => $query->where('user_id', $request->user()->id)))
             ->when($request->filled('search'), fn ($query) => $query->where('name', 'like', '%'.$request->string('search').'%'))
             ->withCount([
                 'members',
@@ -72,16 +117,75 @@ class GroupController extends Controller
                         ->where('group_members.user_id', $request->user()->id);
                 }),
             ])
+            // When anyone last did something there: the newest chat message
+            // or approved post, or when the group was made.
+            ->selectRaw(
+                'GREATEST(groups.created_at, '
+                .'COALESCE((SELECT MAX(gm.created_at) FROM group_messages gm WHERE gm.group_id = groups.id), groups.created_at), '
+                .'COALESCE((SELECT MAX(p.created_at) FROM posts p WHERE p.group_id = groups.id AND p.approval_status = ?), groups.created_at)'
+                .') as last_activity_at',
+                [PostApprovalStatus::Approved->value],
+            )
+            ->when($city !== null, fn ($query) => $this->addCityRanking($query, $request->user(), $city))
             ->with(['creator', 'latestMessage.sender'])
-            ->latest()
+            // The viewer's own groups first — ones with unread chat on top,
+            // then most recently active; then groups for their city, then
+            // the biggest.
+            ->orderByDesc('is_member')
+            ->orderByRaw('(is_member = 1 AND unread_count > 0) DESC')
+            ->orderByRaw('CASE WHEN is_member = 1 THEN last_activity_at END DESC')
+            ->when($city !== null, fn ($query) => $query
+                ->orderByDesc('named_after_city')
+                ->orderByDesc('local_members_count'))
+            ->orderByDesc('members_count')
+            ->orderByDesc('groups.id')
             ->paginate(self::PER_PAGE)
             ->withQueryString();
 
         return GroupResource::collection($groups);
     }
 
+    /**
+     * The viewer's city: from their address, else the town in their
+     * location label. Null when neither is set.
+     */
+    private function cityOf(User $user): ?string
+    {
+        $city = trim((string) $user->address_city) ?: AutoGroupService::townFrom($user->location_label);
+
+        return $city === null || $city === '' ? null : $city;
+    }
+
+    /**
+     * Adds local_members_count (members from the viewer's city) and
+     * named_after_city to each group — see GroupResource::is_local.
+     */
+    private function addCityRanking(Builder $groups, User $user, string $city): void
+    {
+        $like = '%'.addcslashes(Str::lower($city), '%_\\').'%';
+
+        $groups
+            ->addSelect([
+                'local_members_count' => DB::table('group_members')
+                    ->join('users', 'users.id', '=', 'group_members.user_id')
+                    ->selectRaw('COUNT(*)')
+                    ->whereColumn('group_members.group_id', 'groups.id')
+                    ->where('users.id', '!=', $user->id)
+                    ->where(fn ($query) => $query
+                        ->whereRaw('LOWER(users.address_city) = ?', [Str::lower($city)])
+                        ->orWhereRaw('LOWER(users.location_label) LIKE ?', [$like])),
+            ])
+            ->selectRaw('(LOWER(groups.name) LIKE ? OR (groups.auto_type = ? AND groups.auto_key = ?)) as named_after_city', [
+                $like,
+                AutoGroupService::TYPE_LOCATION,
+                Str::slug($city),
+            ]);
+    }
+
     public function store(StoreGroupRequest $request, ImageService $imageService): JsonResponse
     {
+        $this->authorize('create', Group::class);
+
         $data = $request->validated();
         $user = $request->user();
 
@@ -222,6 +326,8 @@ class GroupController extends Controller
     public function join(Request $request, Group $group): GroupResource|JsonResponse
     {
         abort_if($group->status !== GroupStatus::Active, 403, 'This group is no longer available.');
+        // An event's chat is joined by RSVPing "going" — see EventChatService.
+        abort_if($group->isEventChat(), 403, 'RSVP as going to join this event\'s chat.');
 
         $user = $request->user();
 

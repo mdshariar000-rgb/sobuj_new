@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shobuj_mobile/models/paginated_response.dart';
 import 'package:shobuj_mobile/models/post.dart';
 import 'package:shobuj_mobile/models/report.dart';
 import 'package:shobuj_mobile/providers/auth_providers.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
-import 'package:shobuj_mobile/screens/home/home_feed_screen.dart';
+import 'package:shobuj_mobile/screens/home/widgets/post_card.dart';
 import 'package:shobuj_mobile/screens/profile/blocked_users_screen.dart';
 import 'package:shobuj_mobile/screens/profile/privacy_safety_screen.dart';
 import 'package:shobuj_mobile/services/api_exception.dart';
@@ -29,9 +28,8 @@ Post _post({required int id, required String body, int authorId = 2}) {
 Future<ProviderContainer> _pump(
   WidgetTester tester,
   FakeApiClient fakeClient,
-  Widget home, {
-  bool scrollFeed = false,
-}) async {
+  Widget home,
+) async {
   final fakeStorage = FakeSecureStorageService();
   await fakeStorage.saveToken('existing-token');
   fakeClient.meResult = buildFakeUser(id: 1, name: 'Me');
@@ -52,24 +50,34 @@ Future<ProviderContainer> _pump(
   );
   await tester.pumpAndSettle();
 
-  if (scrollFeed) {
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
-    await tester.pumpAndSettle();
-  }
-
   return container;
 }
 
-FakeApiClient _feedClient() => FakeApiClient()
-  ..homeFeedResult = PaginatedResponse(
-    data: [
-      _post(id: 1, body: 'My own post', authorId: 1),
-      _post(id: 2, body: "Rina's post"),
-    ],
-    currentPage: 1,
-    lastPage: 1,
-    total: 2,
-  );
+FakeApiClient _feedClient() => FakeApiClient();
+
+/// Two posts — one of the signed-in user's own, one of someone else's —
+/// rendered the way every post list in the app renders them.
+class _PostList extends StatelessWidget {
+  const _PostList();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: ListView(
+        children: [
+          // Screens pass edit/delete only for the signed-in user's own
+          // posts, which is what hides the report/block menu.
+          PostCard(
+            post: _post(id: 1, body: 'My own post', authorId: 1),
+            onEdit: () {},
+            onDelete: () {},
+          ),
+          PostCard(post: _post(id: 2, body: "Rina's post")),
+        ],
+      ),
+    );
+  }
+}
 
 void main() {
   group('reporting', () {
@@ -77,7 +85,7 @@ void main() {
       tester,
     ) async {
       final client = _feedClient();
-      await _pump(tester, client, const HomeFeedScreen(), scrollFeed: true);
+      await _pump(tester, client, const _PostList());
 
       await tester.tap(find.byKey(const Key('post-safety-menu-2')));
       await tester.pumpAndSettle();
@@ -85,9 +93,8 @@ void main() {
       await tester.pumpAndSettle();
 
       // Submit stays disabled until a reason is chosen.
-      FilledButton submit() => tester.widget<FilledButton>(
-        find.byKey(const Key('report-submit')),
-      );
+      FilledButton submit() =>
+          tester.widget<FilledButton>(find.byKey(const Key('report-submit')));
       expect(submit().onPressed, isNull);
 
       await tester.tap(find.byKey(const Key('report-reason-spam')));
@@ -113,36 +120,35 @@ void main() {
       expect(find.byKey(const Key('report-sheet')), findsNothing);
     });
 
-    testWidgets('a failed report shows the server message and keeps the sheet', (
-      tester,
-    ) async {
-      final client = _feedClient()
-        ..reportError = const ApiException(
-          message: 'You cannot report your own content.',
-          statusCode: 422,
+    testWidgets(
+      'a failed report shows the server message and keeps the sheet',
+      (tester) async {
+        final client = _feedClient()
+          ..reportError = const ApiException(
+            message: 'You cannot report your own content.',
+            statusCode: 422,
+          );
+        await _pump(tester, client, const _PostList());
+
+        await tester.tap(find.byKey(const Key('post-safety-menu-2')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Report post'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('report-reason-other')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('report-submit')));
+        await tester.pumpAndSettle();
+
+        expect(
+          find.text('You cannot report your own content.'),
+          findsOneWidget,
         );
-      await _pump(tester, client, const HomeFeedScreen(), scrollFeed: true);
-
-      await tester.tap(find.byKey(const Key('post-safety-menu-2')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Report post'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('report-reason-other')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const Key('report-submit')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('You cannot report your own content.'), findsOneWidget);
-      expect(find.byKey(const Key('report-sheet')), findsOneWidget);
-    });
+        expect(find.byKey(const Key('report-sheet')), findsOneWidget);
+      },
+    );
 
     testWidgets('your own post has no report/block menu', (tester) async {
-      await _pump(
-        tester,
-        _feedClient(),
-        const HomeFeedScreen(),
-        scrollFeed: true,
-      );
+      await _pump(tester, _feedClient(), const _PostList());
 
       expect(find.byKey(const Key('post-safety-menu-1')), findsNothing);
       expect(find.byKey(const Key('post-safety-menu-2')), findsOneWidget);
@@ -154,7 +160,7 @@ void main() {
       tester,
     ) async {
       final client = _feedClient();
-      await _pump(tester, client, const HomeFeedScreen(), scrollFeed: true);
+      await _pump(tester, client, const _PostList());
 
       await tester.tap(find.byKey(const Key('post-safety-menu-2')));
       await tester.pumpAndSettle();
@@ -173,7 +179,7 @@ void main() {
 
     testWidgets('cancelling the confirmation blocks nobody', (tester) async {
       final client = _feedClient();
-      await _pump(tester, client, const HomeFeedScreen(), scrollFeed: true);
+      await _pump(tester, client, const _PostList());
 
       await tester.tap(find.byKey(const Key('post-safety-menu-2')));
       await tester.pumpAndSettle();

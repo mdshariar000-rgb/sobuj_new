@@ -2,6 +2,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import 'image_decode.dart';
 
 /// A real avatar photo when the user has uploaded one, falling back to an
 /// initial-letter circle otherwise — never a fabricated stock photo.
@@ -40,6 +41,7 @@ class UserAvatar extends StatelessWidget {
             imageUrl: avatarUrl!,
             width: radius * 2,
             height: radius * 2,
+            memCacheWidth: decodeWidthFor(context, radius * 2),
             fit: BoxFit.cover,
             placeholder: (context, _) => const SizedBox.shrink(),
             errorWidget: (context, _, _) => _InitialCircle(

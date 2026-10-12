@@ -18,7 +18,7 @@ class GroupPrivacyAndModerationTest extends TestCase
 
     public function test_a_group_can_be_created_private_and_defaults_to_public(): void
     {
-        Sanctum::actingAs(User::factory()->create());
+        Sanctum::actingAs(User::factory()->create(['is_admin' => true]));
 
         $private = $this->postJson('/api/v1/groups', [
             'name' => 'Secret Seed Bank',

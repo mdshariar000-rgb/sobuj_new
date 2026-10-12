@@ -1,6 +1,9 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
@@ -18,35 +21,72 @@ import 'event_detail_screen.dart';
 /// a bottom sheet — enough fields that a sheet would feel cramped, and it
 /// mirrors "Save Draft" as its own explicit action alongside Publish.
 class CreateEventScreen extends ConsumerStatefulWidget {
-  const CreateEventScreen({super.key});
+  const CreateEventScreen({super.key, this.event});
+
+  /// An event of yours to edit — a draft from "My drafts" to finish, or a
+  /// published one from its detail page.
+  final Event? event;
 
   @override
   ConsumerState<CreateEventScreen> createState() => _CreateEventScreenState();
 }
-
-/// A gear checklist looks great in the reference design, but the backend
-/// has no field for it — selecting items is real, visible UI state, it's
-/// just not sent anywhere yet ("Coming soon" makes that clear rather than
-/// silently discarding it).
-const _gearOptions = ['Bypass Shears', 'Mud Boots', 'Grafting Knife', 'Gloves'];
 
 class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _locationController = TextEditingController();
+  final _capacityController = TextEditingController();
+  final _feeController = TextEditingController();
+  final List<DateTime> _proposedDates = [];
 
   EventFormat _format = EventFormat.inPerson;
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
+  TimeOfDay? _selectedEndTime;
   File? _coverImage;
   int? _groupId;
   String? _category;
-  bool _hasCapacityLimit = true;
-  int _capacity = 20;
-  final Set<String> _selectedGear = {};
   bool _isSubmitting = false;
   String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    final draft = widget.event;
+    if (draft == null) return;
+    // Event times are stored and shown as entered (no UTC conversion), so
+    // read the wall-clock fields as they are — toLocal() would shift them.
+    final startsAt = draft.startsAt;
+    final endsAt = draft.endsAt;
+    _titleController.text = draft.title;
+    _descriptionController.text = draft.description ?? '';
+    _locationController.text = draft.location ?? '';
+    _capacityController.text = draft.capacity?.toString() ?? '';
+    _feeController.text = draft.registrationFee != null
+        ? draft.registrationFee!.toStringAsFixed(2)
+        : '';
+    _proposedDates.addAll(draft.proposedDates.map((date) => date.toLocal()));
+    _format = draft.format;
+    _category = draft.category;
+    _groupId = draft.groupId;
+    _selectedDate = DateTime(startsAt.year, startsAt.month, startsAt.day);
+    _selectedTime = TimeOfDay.fromDateTime(startsAt);
+    if (endsAt != null) _selectedEndTime = TimeOfDay.fromDateTime(endsAt);
+  }
+
+  /// Editing an event that's already live — it saves in place instead of
+  /// offering Save Draft / Publish.
+  bool get _isEditingPublished => widget.event?.status == EventStatus.published;
+
+  /// Empty or zero means a free event.
+  double? get _registrationFee {
+    final fee = double.tryParse(_feeController.text.trim());
+    return fee == null || fee <= 0 ? null : fee;
+  }
+
+  /// Empty means no attendee limit.
+  int? get _capacity => int.tryParse(_capacityController.text.trim());
 
   DateTime? get _startsAt {
     final date = _selectedDate;
@@ -55,11 +95,29 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
   }
 
+  /// On the event's date; an end time at or before the start runs past
+  /// midnight into the next day.
+  DateTime? get _endsAt {
+    final start = _startsAt;
+    final time = _selectedEndTime;
+    if (start == null || time == null) return null;
+    final end = DateTime(
+      start.year,
+      start.month,
+      start.day,
+      time.hour,
+      time.minute,
+    );
+    return end.isAfter(start) ? end : end.add(const Duration(days: 1));
+  }
+
   @override
   void dispose() {
     _titleController.dispose();
     _descriptionController.dispose();
     _locationController.dispose();
+    _capacityController.dispose();
+    _feeController.dispose();
     super.dispose();
   }
 
@@ -84,17 +142,93 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
   }
 
   Future<void> _pickTime() async {
-    final time = await showTimePicker(
-      context: context,
-      initialTime: _selectedTime ?? const TimeOfDay(hour: 9, minute: 0),
+    final time = await _showTimeWheel(
+      'Start time',
+      _selectedTime ?? const TimeOfDay(hour: 9, minute: 0),
     );
     if (time != null) setState(() => _selectedTime = time);
   }
 
-  void _comingSoon(String feature) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$feature is coming soon.')));
+  Future<void> _pickEndTime() async {
+    final start = _selectedTime ?? const TimeOfDay(hour: 9, minute: 0);
+    final time = await _showTimeWheel(
+      'End time',
+      _selectedEndTime ??
+          TimeOfDay(hour: (start.hour + 2) % 24, minute: start.minute),
+    );
+    if (time != null) setState(() => _selectedEndTime = time);
+  }
+
+  /// Another date the host is considering — a date, then a time.
+  Future<void> _addProposedDate() async {
+    final now = DateTime.now();
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? now.add(const Duration(days: 1)),
+      firstDate: now,
+      lastDate: now.add(const Duration(days: 730)),
+    );
+    if (date == null || !mounted) return;
+    final time = await _showTimeWheel(
+      'Time',
+      _selectedTime ?? const TimeOfDay(hour: 9, minute: 0),
+    );
+    if (time == null) return;
+    setState(
+      () => _proposedDates
+        ..add(DateTime(date.year, date.month, date.day, time.hour, time.minute))
+        ..sort(),
+    );
+  }
+
+  /// A scrolling hour/minute wheel — simpler to use than the clock dial.
+  Future<TimeOfDay?> _showTimeWheel(String title, TimeOfDay initial) {
+    var picked = initial;
+    return showModalBottomSheet<TimeOfDay>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+              child: Row(
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  TextButton(
+                    key: const Key('event-time-done'),
+                    onPressed: () => Navigator.of(context).pop(picked),
+                    child: const Text('Done'),
+                  ),
+                ],
+              ),
+            ),
+            SizedBox(
+              height: 200,
+              child: CupertinoDatePicker(
+                mode: CupertinoDatePickerMode.time,
+                minuteInterval: 5,
+                initialDateTime: DateTime(
+                  2000,
+                  1,
+                  1,
+                  picked.hour,
+                  picked.minute - picked.minute % 5,
+                ),
+                onDateTimeChanged: (value) =>
+                    picked = TimeOfDay.fromDateTime(value),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _preview() {
@@ -118,7 +252,11 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                 ? null
                 : _locationController.text.trim(),
             startsAt: _startsAt ?? DateTime.now().add(const Duration(days: 1)),
-            capacity: _hasCapacityLimit ? _capacity : null,
+            endsAt: _endsAt,
+            coverImageUrl: widget.event?.coverImageUrl,
+            capacity: _capacity,
+            registrationFee: _registrationFee,
+            proposedDates: _proposedDates,
             status: EventStatus.draft,
             host: currentUser,
             createdAt: DateTime.now(),
@@ -134,6 +272,10 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
       setState(() => _errorMessage = 'Pick a date and time for the event.');
       return;
     }
+    if (status == EventStatus.published && _endsAt == null) {
+      setState(() => _errorMessage = 'Pick an end time for the event.');
+      return;
+    }
 
     setState(() {
       _isSubmitting = true;
@@ -144,6 +286,7 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
       await ref
           .read(eventsListProvider.notifier)
           .createEvent(
+            existingEventId: widget.event?.id,
             groupId: _groupId,
             title: _titleController.text.trim(),
             description: _descriptionController.text.trim().isEmpty
@@ -156,7 +299,10 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                 ? null
                 : _locationController.text.trim(),
             startsAt: _startsAt!,
-            capacity: _hasCapacityLimit ? _capacity : null,
+            endsAt: _endsAt,
+            capacity: _capacity,
+            registrationFee: _registrationFee,
+            proposedDates: _proposedDates,
             status: status,
           );
       if (mounted) Navigator.of(context).pop();
@@ -170,7 +316,10 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
   @override
   Widget build(BuildContext context) {
     final myGroups =
-        ref.watch(groupsListProvider).valueOrNull?.groups
+        ref
+            .watch(groupsListProvider)
+            .valueOrNull
+            ?.groups
             .where((group) => group.isMember == true)
             .toList() ??
         const [];
@@ -183,7 +332,7 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'AGRO HUB COMMUNITY',
+              'SHOBUJ COMMUNITY',
               style: TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
@@ -191,22 +340,29 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                 color: AppColors.primary,
               ),
             ),
-            const Text('Create Farming Event'),
+            Text(widget.event != null ? 'Edit Event' : 'Create Event'),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: _isSubmitting ? null : () => _submit(EventStatus.draft),
-            style: TextButton.styleFrom(
-              minimumSize: Size.zero,
-              backgroundColor: AppColors.surfaceMuted,
-              foregroundColor: AppColors.textDark,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              shape: const StadiumBorder(),
+          if (!_isEditingPublished) ...[
+            TextButton(
+              onPressed: _isSubmitting
+                  ? null
+                  : () => _submit(EventStatus.draft),
+              style: TextButton.styleFrom(
+                minimumSize: Size.zero,
+                backgroundColor: AppColors.surfaceMuted,
+                foregroundColor: AppColors.textDark,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                shape: const StadiumBorder(),
+              ),
+              child: const Text('Save Draft'),
             ),
-            child: const Text('Save Draft'),
-          ),
-          const SizedBox(width: 16),
+            const SizedBox(width: 16),
+          ],
         ],
       ),
       body: SafeArea(
@@ -244,17 +400,17 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                       segments: const [
                         ButtonSegment(
                           value: EventFormat.inPerson,
-                          label: Text('In-Person Field'),
+                          label: Text('In-Person'),
                           icon: Icon(Icons.grass, size: 16),
                         ),
                         ButtonSegment(
                           value: EventFormat.online,
-                          label: Text('Online Stream'),
+                          label: Text('Online'),
                           icon: Icon(Icons.videocam_outlined, size: 16),
                         ),
                         ButtonSegment(
                           value: EventFormat.hybrid,
-                          label: Text('Hybrid Meetup'),
+                          label: Text('Hybrid'),
                           icon: Icon(Icons.sync_alt, size: 16),
                         ),
                       ],
@@ -265,8 +421,8 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                     const SizedBox(height: 24),
                     Row(
                       children: [
-                        _SectionLabel('Event Cover Photo'),
-                        const Spacer(),
+                        Expanded(child: _SectionLabel('Event Cover Photo')),
+                        const SizedBox(width: 8),
                         Text(
                           '16:9 recommended',
                           style: Theme.of(context).textTheme.bodySmall
@@ -277,12 +433,13 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                     const SizedBox(height: 8),
                     _CoverPhotoPicker(
                       image: _coverImage,
+                      imageUrl: widget.event?.coverImageUrl,
                       onTap: _isSubmitting ? null : _pickImage,
                     ),
                     const SizedBox(height: 24),
                     _SectionCard(
                       icon: Icons.event_note_outlined,
-                      title: 'Event Basics',
+                      title: 'Event Information',
                       children: [
                         TextFormField(
                           controller: _titleController,
@@ -296,29 +453,31 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                               : null,
                         ),
                         const SizedBox(height: 14),
-                        DropdownButtonFormField<int?>(
-                          initialValue: _groupId,
-                          decoration: const InputDecoration(
-                            labelText: 'Publishing Hub / Community Group',
-                          ),
-                          items: [
-                            const DropdownMenuItem(
-                              value: null,
-                              child: Text('Post to general feed'),
-                            ),
-                            for (final group in myGroups)
-                              DropdownMenuItem(
-                                value: group.id,
-                                child: Text(
-                                  group.membersCount != null
-                                      ? '${group.name} (${group.membersCount} members)'
-                                      : group.name,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
+                        LayoutBuilder(
+                          builder: (context, constraints) => DropdownMenu<int?>(
+                            key: const Key('event-group-picker'),
+                            width: constraints.maxWidth,
+                            initialSelection: _groupId,
+                            label: const Text('Group (optional)'),
+                            hintText: 'Search your groups',
+                            leadingIcon: const Icon(Icons.search),
+                            enableFilter: true,
+                            requestFocusOnTap: true,
+                            menuHeight: 280,
+                            dropdownMenuEntries: [
+                              const DropdownMenuEntry(
+                                value: null,
+                                label: 'No group',
                               ),
-                          ],
-                          onChanged: (value) =>
-                              setState(() => _groupId = value),
+                              for (final group in myGroups)
+                                DropdownMenuEntry(
+                                  value: group.id,
+                                  label: group.name,
+                                ),
+                            ],
+                            onSelected: (value) =>
+                                setState(() => _groupId = value),
+                          ),
                         ),
                         const SizedBox(height: 16),
                         _CategoryPicker(
@@ -334,25 +493,30 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                       icon: Icons.schedule_outlined,
                       title: 'Schedule & Location',
                       children: [
+                        _PickerField(
+                          label: 'Event Date',
+                          value: _selectedDate != null
+                              ? DateFormat('EEE d MMM y').format(_selectedDate!)
+                              : null,
+                          onTap: _isSubmitting ? null : _pickDate,
+                        ),
+                        const SizedBox(height: 14),
                         Row(
                           children: [
-                            Expanded(
-                              child: _PickerField(
-                                label: 'Event Date',
-                                value: _selectedDate != null
-                                    ? DateFormat(
-                                        'MMM d, y',
-                                      ).format(_selectedDate!)
-                                    : null,
-                                onTap: _isSubmitting ? null : _pickDate,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
                             Expanded(
                               child: _PickerField(
                                 label: 'Start Time',
                                 value: _selectedTime?.format(context),
                                 onTap: _isSubmitting ? null : _pickTime,
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: _PickerField(
+                                key: const Key('event-end-time'),
+                                label: 'End Time',
+                                value: _selectedEndTime?.format(context),
+                                onTap: _isSubmitting ? null : _pickEndTime,
                               ),
                             ),
                           ],
@@ -361,16 +525,46 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                         TextFormField(
                           controller: _locationController,
                           decoration: const InputDecoration(
-                            labelText: 'Field or Demonstration Address',
+                            labelText: 'Address of Event',
                           ),
                         ),
-                        const SizedBox(height: 14),
-                        _ComingSoonToggle(
-                          icon: Icons.podcasts_outlined,
-                          title: 'Auto-generate Agro Hub Live Stream',
-                          subtitle:
-                              'Stream live demo to remote group members',
-                          onTap: () => _comingSoon('Live streaming'),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Proposed dates (optional)',
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Other dates you are considering for this event.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: AppColors.textMuted),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final date in _proposedDates)
+                              InputChip(
+                                label: Text(
+                                  DateFormat('EEE d MMM · HH:mm').format(date),
+                                ),
+                                onDeleted: _isSubmitting
+                                    ? null
+                                    : () => setState(
+                                        () => _proposedDates.remove(date),
+                                      ),
+                              ),
+                            ActionChip(
+                              key: const Key('add-proposed-date'),
+                              avatar: const Icon(Icons.add, size: 18),
+                              label: const Text('Add date'),
+                              onPressed: _isSubmitting
+                                  ? null
+                                  : _addProposedDate,
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -391,125 +585,38 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                           ),
                         ),
                         const SizedBox(height: 16),
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: _MiniStatBox(
-                                label: 'MAX ATTENDEES',
-                                child: _hasCapacityLimit
-                                    ? Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.spaceBetween,
-                                        children: [
-                                          Text(
-                                            '$_capacity spots',
-                                            style: Theme.of(context)
-                                                .textTheme
-                                                .titleMedium
-                                                ?.copyWith(
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                          ),
-                                          Row(
-                                            children: [
-                                              _StepperButton(
-                                                icon: Icons.remove,
-                                                onTap: _capacity > 1
-                                                    ? () => setState(
-                                                        () => _capacity -= 5,
-                                                      )
-                                                    : null,
-                                              ),
-                                              const SizedBox(width: 6),
-                                              _StepperButton(
-                                                icon: Icons.add,
-                                                onTap: () => setState(
-                                                  () => _capacity += 5,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      )
-                                    : TextButton(
-                                        onPressed: () => setState(
-                                          () => _hasCapacityLimit = true,
-                                        ),
-                                        style: TextButton.styleFrom(
-                                          minimumSize: Size.zero,
-                                          padding: EdgeInsets.zero,
-                                          alignment: Alignment.centerLeft,
-                                        ),
-                                        child: const Text('No limit'),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: _MiniStatBox(
-                                label: 'ADMISSION',
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 10,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.mint.withValues(
-                                          alpha: 0.35,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          20,
-                                        ),
-                                      ),
-                                      child: const Text(
-                                        'Free Event',
-                                        style: TextStyle(
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppColors.primary,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: TextButton(
-                                        onPressed: () =>
-                                            _comingSoon('Paid events'),
-                                        style: TextButton.styleFrom(
-                                          minimumSize: Size.zero,
-                                          padding: EdgeInsets.zero,
-                                        ),
-                                        child: const Text(
-                                          'Set fee',
-                                          style: TextStyle(fontSize: 12),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
+                        TextFormField(
+                          key: const Key('event-capacity-field'),
+                          controller: _capacityController,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly,
                           ],
+                          decoration: const InputDecoration(
+                            labelText: 'Max attendees',
+                            hintText: 'Leave empty for no limit',
+                          ),
                         ),
                         const SizedBox(height: 16),
-                        _ComingSoonTagPicker(
-                          title: 'Recommended Gear for Participants',
-                          options: _gearOptions,
-                          selected: _selectedGear,
-                          icon: Icons.check_circle_outline,
-                          onToggle: (option) => setState(
-                            () => _selectedGear.contains(option)
-                                ? _selectedGear.remove(option)
-                                : _selectedGear.add(option),
+                        TextFormField(
+                          key: const Key('event-fee-field'),
+                          controller: _feeController,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                              RegExp(r'^\d*\.?\d{0,2}'),
+                            ),
+                          ],
+                          decoration: const InputDecoration(
+                            labelText: 'Registration fee (£)',
+                            hintText: 'Leave empty for a free event',
+                            helperText: 'Paid at the event, not in the app.',
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 16),
-                    const _WeatherComingSoonPanel(),
                   ],
                 ),
               ),
@@ -520,6 +627,7 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                   child: Row(
                     children: [
                       Expanded(
+                        flex: 2,
                         child: OutlinedButton.icon(
                           onPressed: _isSubmitting ? null : _preview,
                           icon: const Icon(Icons.visibility_outlined, size: 18),
@@ -528,7 +636,7 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        flex: 2,
+                        flex: 3,
                         child: FilledButton.icon(
                           onPressed: _isSubmitting
                               ? null
@@ -542,8 +650,15 @@ class _CreateEventScreenState extends ConsumerState<CreateEventScreen> {
                                     color: Colors.white,
                                   ),
                                 )
-                              : const Icon(Icons.eco, size: 18),
-                          label: const Text('Publish Event'),
+                              : Icon(
+                                  _isEditingPublished ? Icons.check : Icons.eco,
+                                  size: 18,
+                                ),
+                          label: Text(
+                            _isEditingPublished
+                                ? 'Save Changes'
+                                : 'Publish Event',
+                          ),
                         ),
                       ),
                     ],
@@ -599,9 +714,9 @@ class _SectionCard extends StatelessWidget {
                 const SizedBox(width: 8),
                 Text(
                   title,
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ],
             ),
@@ -615,13 +730,21 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _CoverPhotoPicker extends StatelessWidget {
-  const _CoverPhotoPicker({required this.image, required this.onTap});
+  const _CoverPhotoPicker({
+    required this.image,
+    required this.imageUrl,
+    required this.onTap,
+  });
 
   final File? image;
+
+  /// The event's current cover, shown until a new one is picked.
+  final String? imageUrl;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final hasImage = image != null || imageUrl != null;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -633,42 +756,45 @@ class _CoverPhotoPicker extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           image: image != null
               ? DecorationImage(image: FileImage(image!), fit: BoxFit.cover)
+              : imageUrl != null
+              ? DecorationImage(
+                  image: CachedNetworkImageProvider(imageUrl!),
+                  fit: BoxFit.cover,
+                )
               : null,
         ),
         child: Container(
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
-            color: image != null ? Colors.black38 : null,
+            color: hasImage ? Colors.black38 : null,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               CircleAvatar(
                 radius: 20,
-                backgroundColor: image != null
+                backgroundColor: hasImage
                     ? Colors.white24
                     : AppColors.primary.withValues(alpha: 0.1),
                 child: Icon(
                   Icons.camera_alt_outlined,
-                  color: image != null ? Colors.white : AppColors.primary,
+                  color: hasImage ? Colors.white : AppColors.primary,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                'Change Event Banner',
+                hasImage ? 'Change Event Banner' : 'Upload Event Banner',
                 style: TextStyle(
                   fontWeight: FontWeight.w700,
-                  color: image != null ? Colors.white : AppColors.textDark,
+                  color: hasImage ? Colors.white : AppColors.textDark,
                 ),
               ),
               Text(
                 'PNG, JPG or WebP (up to 8MB)',
                 style: TextStyle(
                   fontSize: 12,
-                  color: image != null
-                      ? Colors.white70
-                      : AppColors.textMuted,
+                  color: hasImage ? Colors.white70 : AppColors.textMuted,
                 ),
               ),
             ],
@@ -681,6 +807,7 @@ class _CoverPhotoPicker extends StatelessWidget {
 
 class _PickerField extends StatelessWidget {
   const _PickerField({
+    super.key,
     required this.label,
     required this.value,
     required this.onTap,
@@ -702,94 +829,6 @@ class _PickerField extends StatelessWidget {
           style: TextStyle(
             color: value != null ? AppColors.textDark : AppColors.textMuted,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ComingSoonToggle extends StatelessWidget {
-  const _ComingSoonToggle({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.surfaceMuted,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: AppColors.forestDark,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, size: 16, color: AppColors.mint),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          title,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceContainer,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'Coming soon',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Switch(value: false, onChanged: null),
-          ],
         ),
       ),
     );
@@ -869,218 +908,6 @@ class _CategoryPicker extends ConsumerWidget {
           },
         ),
       ],
-    );
-  }
-}
-
-/// A tappable chip picker for a field the backend doesn't have yet (gear
-/// checklist). Selections are real local UI state — visibly checkable,
-/// matching the reference design — but the "Coming soon" tag makes clear
-/// nothing is sent to the server yet.
-class _ComingSoonTagPicker extends StatelessWidget {
-  const _ComingSoonTagPicker({
-    required this.title,
-    required this.options,
-    required this.selected,
-    required this.onToggle,
-    this.icon = Icons.check,
-  });
-
-  final String title;
-  final List<String> options;
-  final Set<String> selected;
-  final ValueChanged<String> onToggle;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceMuted,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: const Text(
-                'Coming soon',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final option in options)
-              ChoiceChip(
-                label: Text(option),
-                avatar: selected.contains(option)
-                    ? Icon(icon, size: 16, color: Colors.white)
-                    : null,
-                selected: selected.contains(option),
-                onSelected: (_) => onToggle(option),
-                selectedColor: AppColors.primary,
-                labelStyle: TextStyle(
-                  color: selected.contains(option)
-                      ? Colors.white
-                      : AppColors.textDark,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-                backgroundColor: AppColors.surfaceMuted,
-                shape: const StadiumBorder(),
-                side: BorderSide.none,
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _MiniStatBox extends StatelessWidget {
-  const _MiniStatBox({required this.label, required this.child});
-
-  final String label;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textMuted,
-              letterSpacing: 0.4,
-            ),
-          ),
-          const SizedBox(height: 6),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _StepperButton extends StatelessWidget {
-  const _StepperButton({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 26,
-        height: 26,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: onTap != null
-              ? AppColors.surfaceContainer
-              : AppColors.surfaceContainer.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Icon(
-          icon,
-          size: 16,
-          color: onTap != null ? AppColors.primary : AppColors.textMuted,
-        ),
-      ),
-    );
-  }
-}
-
-class _WeatherComingSoonPanel extends StatelessWidget {
-  const _WeatherComingSoonPanel();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.forestPanel, AppColors.forestDark],
-        ),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.wb_cloudy_outlined, color: AppColors.mint),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Text(
-                      'Agri-AI Weather Forecast',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white12,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text(
-                        'Coming soon',
-                        style: TextStyle(fontSize: 10, color: Colors.white70),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'A local forecast for your event\'s date and location will '
-                  'show here once weather integration ships.',
-                  style: TextStyle(color: AppColors.textOnDarkMuted, fontSize: 12),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

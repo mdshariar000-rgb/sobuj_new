@@ -8,12 +8,12 @@ Future<void> _pumpBell(WidgetTester tester, int unreadCount) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        unreadNotificationCountProvider.overrideWith((ref) async => unreadCount),
+        unreadNotificationCountProvider.overrideWith(
+          (ref) async => unreadCount,
+        ),
       ],
       child: MaterialApp(
-        home: Scaffold(
-          body: NotificationBellButton(onTap: () {}),
-        ),
+        home: Scaffold(body: NotificationBellButton(onTap: () {})),
       ),
     ),
   );

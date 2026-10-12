@@ -4,6 +4,8 @@ namespace App\Http\Requests\Auth;
 
 use App\Enums\ExperienceLevel;
 use App\Enums\GrowingSetup;
+use App\Support\Interests;
+use App\Support\UkAddress;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Password;
@@ -18,9 +20,20 @@ class RegisterRequest extends FormRequest
     /**
      * @return array<string, mixed>
      */
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('address_postcode')) {
+            $this->merge(['address_postcode' => UkAddress::normalisePostcode($this->input('address_postcode'))]);
+        }
+    }
+
     public function rules(): array
     {
         return [
+            // Full UK address — required for every account, private to the
+            // user and admins.
+            ...UkAddress::rules(required: true),
+
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
             'password' => ['required', 'confirmed', Password::defaults()],
@@ -38,6 +51,11 @@ class RegisterRequest extends FormRequest
 
             'experience_level' => ['nullable', Rule::enum(ExperienceLevel::class)],
             'growing_setup' => ['nullable', Rule::enum(GrowingSetup::class)],
+
+            // The sign-up interests (see App\Support\Interests) — each one
+            // puts the user in that interest's group.
+            'growing_interests' => ['nullable', 'array', 'max:10'],
+            'growing_interests.*' => ['string', Rule::in(Interests::ALL)],
 
             'device_name' => ['nullable', 'string', 'max:255'],
         ];

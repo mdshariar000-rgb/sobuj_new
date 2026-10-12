@@ -19,6 +19,8 @@ class Event {
     required this.startsAt,
     this.endsAt,
     this.capacity,
+    this.registrationFee,
+    this.proposedDates = const [],
     required this.status,
     this.attendeesCount,
     this.attendeesPreview,
@@ -26,6 +28,7 @@ class Event {
     this.host,
     this.group,
     this.myRsvpStatus,
+    this.isNearYou,
     required this.createdAt,
   });
 
@@ -43,6 +46,13 @@ class Event {
   final DateTime startsAt;
   final DateTime? endsAt;
   final int? capacity;
+
+  /// Shown to attendees; paid at the door, not through the app. Null or
+  /// zero means free.
+  final double? registrationFee;
+
+  /// Other dates the host is considering, besides [startsAt].
+  final List<DateTime> proposedDates;
   final EventStatus status;
   final int? attendeesCount;
 
@@ -68,6 +78,9 @@ class Event {
   /// RSVP yet", not just "not loaded" — treat both the same in the UI.
   final EventAttendeeStatus? myRsvpStatus;
 
+  /// Only from GET /events: the place mentions the viewer's city.
+  final bool? isNearYou;
+
   final DateTime createdAt;
 
   Event copyWith({
@@ -88,6 +101,8 @@ class Event {
       startsAt: startsAt,
       endsAt: endsAt,
       capacity: capacity,
+      registrationFee: registrationFee,
+      proposedDates: proposedDates,
       status: status,
       attendeesCount: attendeesCount ?? this.attendeesCount,
       attendeesPreview: attendeesPreview,
@@ -95,6 +110,7 @@ class Event {
       host: host,
       group: group,
       myRsvpStatus: clearRsvp ? null : (myRsvpStatus ?? this.myRsvpStatus),
+      isNearYou: isNearYou,
       createdAt: createdAt,
     );
   }
@@ -114,6 +130,10 @@ class Event {
           ? DateTime.parse(json['ends_at'] as String)
           : null,
       capacity: json['capacity'] as int?,
+      registrationFee: (json['registration_fee'] as num?)?.toDouble(),
+      proposedDates: (json['proposed_dates'] as List<dynamic>? ?? const [])
+          .map((date) => DateTime.parse(date as String))
+          .toList(),
       status: EventStatus.fromValue(json['status'] as String),
       attendeesCount: json['attendees_count'] as int?,
       attendeesPreview: (json['attendees_preview'] as List<dynamic>?)
@@ -129,6 +149,7 @@ class Event {
       myRsvpStatus: json['my_rsvp_status'] != null
           ? EventAttendeeStatus.fromValue(json['my_rsvp_status'] as String)
           : null,
+      isNearYou: json['is_near_you'] as bool?,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }

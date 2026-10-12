@@ -1,445 +1,321 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shobuj_mobile/models/paginated_response.dart';
-import 'package:shobuj_mobile/models/post.dart';
+import 'package:shobuj_mobile/models/enums.dart';
+import 'package:shobuj_mobile/models/feed_marketplace.dart';
+import 'package:shobuj_mobile/models/group.dart';
+import 'package:shobuj_mobile/models/listing.dart';
+import 'package:shobuj_mobile/models/search_results.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
-import 'package:shobuj_mobile/screens/discovery/seller_profile_screen.dart';
+import 'package:shobuj_mobile/providers/shell_providers.dart';
+import 'package:shobuj_mobile/screens/home/grow_now_screen.dart';
 import 'package:shobuj_mobile/screens/home/home_feed_screen.dart';
+import 'package:shobuj_mobile/screens/home/search_results_screen.dart';
+import 'package:shobuj_mobile/screens/home/weather_screen.dart';
 
 import '../support/fake_api_client.dart';
 import '../support/fake_secure_storage_service.dart';
 
-Post _buildPost({
-  required int id,
-  required String body,
-  int authorId = 2,
-  String authorName = 'Rina',
-  int commentsCount = 0,
-  int likesCount = 0,
-  bool likedByMe = false,
-}) {
-  return Post(
-    id: id,
-    body: body,
-    commentsCount: commentsCount,
-    likesCount: likesCount,
-    likedByMe: likedByMe,
-    author: buildFakeUser(id: authorId, name: authorName),
-    createdAt: DateTime.now().subtract(const Duration(hours: 1)),
-  );
-}
+Listing _listing(int id, String title) => Listing(
+  id: id,
+  title: title,
+  listingType: 'Live Plants & Saplings',
+  transactionType: TransactionType.sell,
+  price: 3,
+  status: ListingStatus.active,
+  distanceKm: 1.2,
+  createdAt: DateTime.now().subtract(const Duration(minutes: 30)),
+);
 
-Future<void> _pumpHomeFeed(
+FakeApiClient _clientWithListings() => FakeApiClient()
+  ..feedMarketplaceResult = FeedMarketplace(
+    locationLabel: 'Leeds',
+    nearby: [_listing(1, 'Cherry tomato seedlings'), _listing(2, 'Basil pots')],
+    // Also nearby — shown once, not twice.
+    fromFollowing: [
+      _listing(2, 'Basil pots'),
+      _listing(7, 'Heirloom chilli plants'),
+    ],
+  );
+
+Future<ProviderContainer> _pumpHome(
   WidgetTester tester,
-  FakeApiClient fakeClient, {
-  int currentUserId = 1,
-}) async {
+  FakeApiClient fakeClient,
+) async {
   final fakeStorage = FakeSecureStorageService();
   await fakeStorage.saveToken('existing-token');
-  fakeClient.meResult = buildFakeUser(id: currentUserId, name: 'Me');
+  fakeClient.meResult = buildFakeUser(id: 1, name: 'Me');
+
+  final container = ProviderContainer(
+    overrides: [
+      apiClientProvider.overrideWithValue(fakeClient),
+      secureStorageProvider.overrideWithValue(fakeStorage),
+    ],
+  );
+  addTearDown(container.dispose);
 
   await tester.pumpWidget(
-    ProviderScope(
-      overrides: [
-        apiClientProvider.overrideWithValue(fakeClient),
-        secureStorageProvider.overrideWithValue(fakeStorage),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: const MaterialApp(home: HomeFeedScreen()),
     ),
   );
   await tester.pumpAndSettle();
-  // The redesigned Home screen leads with a tall hero header, diagnostics
-  // card, AI banner and filter chips before the feed itself — scroll past
-  // them so post content (built lazily by the sliver list) actually exists
-  // in the tree for finders to see.
-  await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
+  return container;
+}
+
+Future<void> _scrollTo(WidgetTester tester, Finder finder) async {
+  await tester.dragUntilVisible(
+    finder,
+    find.byType(CustomScrollView),
+    const Offset(0, -150),
+  );
   await tester.pumpAndSettle();
 }
 
 void main() {
-  testWidgets('shows posts returned by the API', (tester) async {
-    final fakeClient = FakeApiClient()
-      ..homeFeedResult = PaginatedResponse(
-        data: [
-          _buildPost(id: 1, body: 'My tomatoes are thriving this week!'),
-          _buildPost(id: 2, body: 'Anyone dealing with aphids on basil?'),
-        ],
-        currentPage: 1,
-        lastPage: 1,
-        total: 2,
-      );
+  testWidgets('shows the greeting, search bar and quick access, with no feed', (
+    tester,
+  ) async {
+    await _pumpHome(tester, FakeApiClient());
 
-    await _pumpHomeFeed(tester, fakeClient);
-
-    expect(find.text('My tomatoes are thriving this week!'), findsOneWidget);
-    expect(find.text('Anyone dealing with aphids on basil?'), findsOneWidget);
-    expect(find.text('Rina'), findsNWidgets(2));
+    // No growing setup or town on the fake user, so the slogan shows.
+    expect(find.text('Grow. Share. Sustain.'), findsOneWidget);
+    expect(find.text('Search items, people, places'), findsOneWidget);
+    expect(find.text('What to grow now'), findsOneWidget);
+    expect(find.text('Weather'), findsOneWidget);
+    expect(find.text('Community'), findsOneWidget);
+    expect(find.text('Events'), findsOneWidget);
+    expect(find.text('Marketplace'), findsOneWidget);
+    // Log out lives on the Profile page now, not next to the bell.
+    expect(find.byIcon(Icons.logout), findsNothing);
+    expect(find.byType(FloatingActionButton), findsNothing);
+    expect(find.textContaining('Community Feed'), findsNothing);
   });
 
-  testWidgets('shows an empty state when there are no posts', (tester) async {
-    await _pumpHomeFeed(tester, FakeApiClient());
+  testWidgets('quick access opens the matching tab', (tester) async {
+    final container = await _pumpHome(tester, FakeApiClient());
 
-    expect(find.text('Your feed is empty'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('quick-access-community')));
+    expect(container.read(selectedTabIndexProvider), 1);
+
+    await tester.tap(find.byKey(const Key('quick-access-events')));
+    expect(container.read(selectedTabIndexProvider), 2);
+
+    await tester.tap(find.byKey(const Key('quick-access-marketplace')));
+    expect(container.read(selectedTabIndexProvider), 3);
   });
 
-  testWidgets('creating a post adds it to the top of the feed', (tester) async {
-    final fakeClient = FakeApiClient()
-      ..homeFeedResult = PaginatedResponse(
-        data: [_buildPost(id: 1, body: 'Existing post')],
-        currentPage: 1,
-        lastPage: 1,
-        total: 1,
-      )
-      ..createPostResult = _buildPost(
-        id: 2,
-        body: 'Fresh basil ready to swap',
-        authorId: 1,
-        authorName: 'Me',
-      );
+  testWidgets('quick access opens the sowing guide and the weather', (
+    tester,
+  ) async {
+    await _pumpHome(tester, FakeApiClient());
 
-    await _pumpHomeFeed(tester, fakeClient);
-
-    await tester.tap(find.byIcon(Icons.camera_alt));
+    await tester.tap(find.byKey(const Key('quick-access-grow-now')));
+    await tester.pumpAndSettle();
+    expect(find.byType(GrowNowScreen), findsOneWidget);
+    await tester.pageBack();
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(TextField), 'Fresh basil ready to swap');
-    await tester.tap(find.widgetWithText(FilledButton, 'Post'));
+    await tester.tap(find.byKey(const Key('quick-access-weather')));
     await tester.pumpAndSettle();
-
-    expect(find.text('Fresh basil ready to swap'), findsOneWidget);
-    expect(find.text('Existing post'), findsOneWidget);
+    expect(find.byType(WeatherScreen), findsOneWidget);
   });
 
-  testWidgets('deleting your own post removes it from the feed', (
+  testWidgets('searching opens results for items, members and groups', (
     tester,
   ) async {
     final fakeClient = FakeApiClient()
-      ..homeFeedResult = PaginatedResponse(
-        data: [
-          _buildPost(id: 1, body: 'My own post', authorId: 1, authorName: 'Me'),
-          _buildPost(id: 2, body: 'Someone else\'s post'),
-        ],
-        currentPage: 1,
-        lastPage: 1,
-        total: 2,
-      );
-
-    await _pumpHomeFeed(tester, fakeClient);
-
-    expect(find.text('My own post'), findsOneWidget);
-
-    // Both cards have a ⋮ menu (edit/delete on your own, report/block on
-    // someone else's) — the first card is the user's own post.
-    await tester.tap(find.byIcon(Icons.more_vert).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete post'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Delete'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('My own post'), findsNothing);
-    expect(find.text('Someone else\'s post'), findsOneWidget);
-    expect(fakeClient.deletePostCalled, isTrue);
-  });
-
-  testWidgets(
-    'editing your own post sends the real change and updates the feed',
-    (tester) async {
-      final original = _buildPost(
-        id: 1,
-        body: 'My own post',
-        authorId: 1,
-        authorName: 'Me',
-      );
-      final fakeClient = FakeApiClient()
-        ..homeFeedResult = PaginatedResponse(
-          data: [original],
-          currentPage: 1,
-          lastPage: 1,
-          total: 1,
-        )
-        ..updatePostResult = _buildPost(
-          id: 1,
-          body: 'Edited post body',
-          authorId: 1,
-          authorName: 'Me',
-        );
-
-      await _pumpHomeFeed(tester, fakeClient);
-
-      expect(find.text('My own post'), findsOneWidget);
-
-      await tester.tap(find.byIcon(Icons.more_vert));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Edit post'));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Edit post'), findsOneWidget);
-      expect(find.widgetWithText(TextField, 'My own post'), findsOneWidget);
-
-      await tester.enterText(
-        find.widgetWithText(TextField, 'My own post'),
-        'Edited post body',
-      );
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-      await tester.pumpAndSettle();
-
-      expect(fakeClient.lastUpdatePostId, 1);
-      expect(fakeClient.lastUpdatePostBody, 'Edited post body');
-      expect(find.text('Edited post body'), findsOneWidget);
-      expect(find.text('My own post'), findsNothing);
-    },
-  );
-
-  testWidgets(
-    'tapping the like button likes a post and updates the count instantly',
-    (tester) async {
-      final post = _buildPost(id: 1, body: 'My tomatoes are thriving!');
-      final fakeClient = FakeApiClient()
-        ..homeFeedResult = PaginatedResponse(
-          data: [post],
-          currentPage: 1,
-          lastPage: 1,
-          total: 1,
-        )
-        ..likePostResult = _buildPost(
-          id: 1,
-          body: 'My tomatoes are thriving!',
-          likesCount: 1,
-          likedByMe: true,
-        );
-
-      await _pumpHomeFeed(tester, fakeClient);
-
-      expect(find.text('0'), findsOneWidget);
-
-      await tester.tap(find.byIcon(Icons.favorite_border));
-      await tester.pumpAndSettle();
-
-      expect(fakeClient.likedPostId, 1);
-      expect(find.text('1'), findsOneWidget);
-      expect(find.byIcon(Icons.favorite), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'tapping the search icon reveals a search field that debounces then '
-    'calls the API with the term',
-    (tester) async {
-      final fakeStorage = FakeSecureStorageService();
-      await fakeStorage.saveToken('existing-token');
-      final fakeClient = FakeApiClient()
-        ..meResult = buildFakeUser(id: 1, name: 'Me')
-        ..homeFeedResult = PaginatedResponse(
-          data: [_buildPost(id: 1, body: 'My tomatoes are thriving!')],
-          currentPage: 1,
-          lastPage: 1,
-          total: 1,
-        );
-
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            apiClientProvider.overrideWithValue(fakeClient),
-            secureStorageProvider.overrideWithValue(fakeStorage),
-          ],
-          child: const MaterialApp(home: HomeFeedScreen()),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // Initial load happens with no search term.
-      expect(fakeClient.lastHomeFeedSearch, isNull);
-
-      await tester.tap(find.byIcon(Icons.search));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Search posts or growers...'), findsOneWidget);
-
-      await tester.enterText(find.byType(TextField), 'tomato');
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(fakeClient.lastHomeFeedSearch, isNot('tomato'));
-
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.pumpAndSettle();
-
-      expect(fakeClient.lastHomeFeedSearch, 'tomato');
-    },
-  );
-
-  testWidgets(
-    'tapping the Disease Alerts/Harvests chips refetches with that real '
-    'category, and Recent clears it back to every category',
-    (tester) async {
-      final fakeStorage = FakeSecureStorageService();
-      await fakeStorage.saveToken('existing-token');
-      final fakeClient = FakeApiClient()
-        ..meResult = buildFakeUser(id: 1, name: 'Me')
-        ..homeFeedResult = PaginatedResponse(
-          data: [_buildPost(id: 1, body: 'My tomatoes are thriving!')],
-          currentPage: 1,
-          lastPage: 1,
-          total: 1,
-        );
-
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            apiClientProvider.overrideWithValue(fakeClient),
-            secureStorageProvider.overrideWithValue(fakeStorage),
-          ],
-          child: const MaterialApp(home: HomeFeedScreen()),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await tester.drag(find.byType(CustomScrollView), const Offset(0, -900));
-      await tester.pumpAndSettle();
-
-      expect(fakeClient.lastHomeFeedCategory, isNull);
-
-      await tester.tap(find.text('Disease Alert'));
-      await tester.pumpAndSettle();
-      expect(fakeClient.lastHomeFeedCategory, 'Disease Alert');
-
-      await tester.tap(find.text('Harvest'));
-      await tester.pumpAndSettle();
-      expect(fakeClient.lastHomeFeedCategory, 'Harvest');
-
-      await tester.tap(find.text('Recent'));
-      await tester.pumpAndSettle();
-      expect(fakeClient.lastHomeFeedCategory, isNull);
-    },
-  );
-
-  testWidgets(
-    'picking a category in the composer sends that real category with the '
-    'new post',
-    (tester) async {
-      final fakeClient = FakeApiClient()
-        ..homeFeedResult = PaginatedResponse(
-          data: const [],
-          currentPage: 1,
-          lastPage: 1,
-          total: 0,
-        )
-        ..createPostResult = _buildPost(
-          id: 2,
-          body: 'Brown spots on my tomato leaves',
-          authorId: 1,
-          authorName: 'Me',
-        );
-
-      await _pumpHomeFeed(tester, fakeClient);
-
-      await tester.tap(find.byIcon(Icons.camera_alt));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byType(TextField),
-        'Brown spots on my tomato leaves',
-      );
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Disease Alert'));
-      await tester.tap(find.widgetWithText(FilledButton, 'Post'));
-      await tester.pumpAndSettle();
-
-      expect(fakeClient.lastCreatePostCategory, 'Disease Alert');
-    },
-  );
-
-  testWidgets(
-    'leaving the composer category untouched sends no category, letting the '
-    'backend apply its own real default',
-    (tester) async {
-      final fakeClient = FakeApiClient()
-        ..homeFeedResult = PaginatedResponse(
-          data: const [],
-          currentPage: 1,
-          lastPage: 1,
-          total: 0,
-        )
-        ..createPostResult = _buildPost(
-          id: 2,
-          body: 'Just enjoying the garden today',
-          authorId: 1,
-          authorName: 'Me',
-        );
-
-      await _pumpHomeFeed(tester, fakeClient);
-
-      await tester.tap(find.byIcon(Icons.camera_alt));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(
-        find.byType(TextField),
-        'Just enjoying the garden today',
-      );
-      await tester.tap(find.widgetWithText(FilledButton, 'Post'));
-      await tester.pumpAndSettle();
-
-      expect(fakeClient.lastCreatePostCategory, isNull);
-    },
-  );
-
-  testWidgets('unliking a post calls unlikePost and decrements the count', (
-    tester,
-  ) async {
-    final fakeClient = FakeApiClient()
-      ..homeFeedResult = PaginatedResponse(
-        data: [
-          _buildPost(
-            id: 1,
-            body: 'Already liked this one',
-            likesCount: 3,
-            likedByMe: true,
+      ..searchResult = SearchResults(
+        listings: [_listing(3, 'Tomato seedlings')],
+        members: [buildFakeUser(id: 8, name: 'Tomato Tom')],
+        groups: [
+          Group(
+            id: 4,
+            name: 'Tomato Growers',
+            slug: 'tomato-growers',
+            createdAt: DateTime(2026, 1, 1),
           ),
         ],
-        currentPage: 1,
-        lastPage: 1,
-        total: 1,
-      )
-      ..unlikePostResult = _buildPost(
-        id: 1,
-        body: 'Already liked this one',
-        likesCount: 2,
       );
+    await _pumpHome(tester, fakeClient);
 
-    await _pumpHomeFeed(tester, fakeClient);
-
-    expect(find.text('3'), findsOneWidget);
-    expect(find.byIcon(Icons.favorite), findsOneWidget);
-
-    await tester.tap(find.byIcon(Icons.favorite));
+    await tester.tap(find.byKey(const Key('home-search-field')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('search-screen-field')),
+      'tomato',
+    );
+    await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pumpAndSettle();
 
-    expect(fakeClient.unlikedPostId, 1);
-    expect(find.text('2'), findsOneWidget);
-    expect(find.byIcon(Icons.favorite_border), findsOneWidget);
+    expect(fakeClient.searchedTerms, ['tomato']);
+    expect(find.byType(SearchResultsScreen), findsOneWidget);
+    expect(find.text('Tomato seedlings'), findsOneWidget);
+    for (final key in ['search-member-8', 'search-group-4']) {
+      await tester.dragUntilVisible(
+        find.byKey(Key(key)),
+        find.byType(CustomScrollView),
+        const Offset(0, -150),
+      );
+      expect(find.byKey(Key(key)), findsOneWidget);
+    }
   });
 
-  testWidgets("tapping a post author's name opens their real profile", (
+  testWidgets('typing suggests terms, items, people and groups live', (
     tester,
   ) async {
     final fakeClient = FakeApiClient()
-      ..homeFeedResult = PaginatedResponse(
-        data: [
-          _buildPost(id: 1, body: 'A post', authorId: 7, authorName: 'Farida'),
+      ..suggestionsResult = SearchSuggestions(
+        terms: const [
+          SearchSuggestion(
+            text: 'tomato plants',
+            type: SearchSuggestionType.history,
+          ),
+          SearchSuggestion(text: 'Tottenham', type: SearchSuggestionType.place),
         ],
-        currentPage: 1,
-        lastPage: 1,
-        total: 1,
-      )
-      ..userProfileResult = buildFakeUser(id: 7, name: 'Farida');
-
-    await _pumpHomeFeed(tester, fakeClient);
-
-    await tester.tap(find.text('Farida'));
+        results: SearchResults(
+          listings: [_listing(3, 'Tomato seedlings')],
+          members: [buildFakeUser(id: 8, name: 'Tomato Tom')],
+          groups: [
+            Group(
+              id: 4,
+              name: 'Tomato Growers',
+              slug: 'tomato-growers',
+              createdAt: DateTime(2026, 1, 1),
+            ),
+          ],
+        ),
+      );
+    await _pumpHome(tester, fakeClient);
+    await tester.tap(find.byKey(const Key('home-search-field')));
     await tester.pumpAndSettle();
 
-    expect(find.byType(SellerProfileScreen), findsOneWidget);
-    // Appears at least once — once as the profile header's name, and again
-    // as the author attribution on her own post now shown in her profile's
-    // Posts section.
-    expect(find.text('Farida'), findsWidgets);
+    await tester.enterText(find.byKey(const Key('search-screen-field')), 't');
+    await tester.enterText(find.byKey(const Key('search-screen-field')), 'to');
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+
+    // Only the last keystroke is fetched, and nothing is saved as a search.
+    expect(fakeClient.suggestedTerms, ['to']);
+    expect(fakeClient.searchedTerms, isEmpty);
+    for (final key in [
+      'search-submit-row',
+      'search-suggestion-tomato plants',
+      'search-suggestion-Tottenham',
+      'search-suggest-listing-3',
+      'search-suggest-member-8',
+      'search-suggest-group-4',
+    ]) {
+      await tester.dragUntilVisible(
+        find.byKey(Key(key)),
+        find.byType(ListView).last,
+        const Offset(0, -100),
+      );
+      expect(find.byKey(Key(key)), findsOneWidget);
+    }
+
+    await tester.dragUntilVisible(
+      find.byKey(const Key('search-suggestion-Tottenham')),
+      find.byType(ListView).last,
+      const Offset(0, 100),
+    );
+    await tester.tap(find.byKey(const Key('search-suggestion-Tottenham')));
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.searchedTerms, ['Tottenham']);
+    expect(find.byType(SearchResultsScreen), findsOneWidget);
+  });
+
+  testWidgets('the search screen lists recent searches before typing', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()..searchHistoryResult = ['basil'];
+    await _pumpHome(tester, fakeClient);
+    await tester.tap(find.byKey(const Key('home-search-field')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('search-recent-basil')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('search-clear-history')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('search-recent-basil')), findsNothing);
+  });
+
+  testWidgets('recent searches show as chips that search again', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()..searchHistoryResult = ['basil'];
+    await _pumpHome(tester, fakeClient);
+
+    await tester.tap(find.byKey(const Key('recent-search-basil')));
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.searchedTerms, ['basil']);
+  });
+
+  testWidgets('matches for past searches come first in picked for you', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()
+      ..feedMarketplaceResult = FeedMarketplace(
+        nearby: [_listing(1, 'Cherry tomato seedlings')],
+        forYou: [_listing(9, 'Chilli plants')],
+      );
+    await _pumpHome(tester, fakeClient);
+    await _scrollTo(tester, find.byKey(const Key('listing-card-1')));
+
+    expect(
+      tester.getTopLeft(find.byKey(const Key('listing-card-9'))).dx,
+      lessThan(tester.getTopLeft(find.byKey(const Key('listing-card-1'))).dx),
+    );
+  });
+
+  testWidgets('picked for you shows nearby and followed listings once each', (
+    tester,
+  ) async {
+    await _pumpHome(tester, _clientWithListings());
+
+    await _scrollTo(tester, find.byKey(const Key('listing-card-7')));
+    expect(find.text('Cherry tomato seedlings'), findsOneWidget);
+    expect(find.text('Basil pots'), findsOneWidget);
+    expect(find.text('Heirloom chilli plants'), findsOneWidget);
+  });
+
+  testWidgets('saving a picked listing saves it for real', (tester) async {
+    final fakeClient = _clientWithListings();
+    await _pumpHome(tester, fakeClient);
+
+    await _scrollTo(tester, find.byKey(const Key('listing-save-1')));
+    await tester.tap(find.byKey(const Key('listing-save-1')));
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.savedListingIds, [1]);
+  });
+
+  testWidgets('with nothing nearby it says so', (tester) async {
+    await _pumpHome(tester, FakeApiClient());
+    await _scrollTo(tester, find.text('Nothing near you yet'));
+
+    expect(find.text('Nothing near you yet'), findsOneWidget);
+  });
+
+  testWidgets('picked for you shows at most six, with See all', (tester) async {
+    final fakeClient = FakeApiClient()
+      ..feedMarketplaceResult = FeedMarketplace(
+        nearby: [for (var i = 1; i <= 9; i++) _listing(i, 'Item $i')],
+      );
+    final container = await _pumpHome(tester, fakeClient);
+
+    await _scrollTo(tester, find.byKey(const Key('listing-card-6')));
+    expect(find.byKey(const Key('listing-card-7')), findsNothing);
+
+    await tester.dragUntilVisible(
+      find.byKey(const Key('picked-for-you-see-all')),
+      find.byType(CustomScrollView),
+      const Offset(0, 150),
+    );
+    await tester.tap(find.byKey(const Key('picked-for-you-see-all')));
+    expect(container.read(selectedTabIndexProvider), 3);
   });
 }

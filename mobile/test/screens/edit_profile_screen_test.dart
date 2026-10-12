@@ -129,9 +129,7 @@ void main() {
     tester,
   ) async {
     final fakeClient = await _pump(tester);
-    fakeClient.updateProfileResult = _buildUser(
-      growingInterests: ['Peppers'],
-    );
+    fakeClient.updateProfileResult = _buildUser(growingInterests: ['Peppers']);
 
     final interestFieldFinder = find.byKey(
       const Key('edit-profile-interest-field'),

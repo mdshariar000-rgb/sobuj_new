@@ -55,7 +55,10 @@ class PushNotificationService {
   /// in this case, so showing a second banner here would double-notify —
   /// only like/comment/reply types get a SnackBar; every type bumps the
   /// unread badge.
-  void handleForegroundMessage(ProviderContainer container, RemoteMessage message) {
+  void handleForegroundMessage(
+    ProviderContainer container,
+    RemoteMessage message,
+  ) {
     container.invalidate(unreadNotificationCountProvider);
 
     final type = message.data['type'] as String?;
@@ -66,19 +69,24 @@ class PushNotificationService {
     final title = message.notification?.title;
     if (context == null || title == null) return;
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(title)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(title)));
   }
 
   /// A notification the user tapped — either while the app was
   /// backgrounded (delivered via onMessageOpenedApp) or after being fully
   /// launched from a killed state by the tap (delivered via
   /// getInitialMessage()). Both call this same dispatcher.
-  void handleNotificationTap(ProviderContainer container, RemoteMessage message) {
+  void handleNotificationTap(
+    ProviderContainer container,
+    RemoteMessage message,
+  ) {
     final context = rootNavigatorKey.currentContext;
     if (context == null) return;
-    openNotificationDataDeepLink(context, container.read(apiClientProvider), message.data);
+    openNotificationDataDeepLink(
+      context,
+      container.read(apiClientProvider),
+      message.data,
+    );
   }
 }
 

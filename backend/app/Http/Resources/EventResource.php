@@ -4,6 +4,7 @@ namespace App\Http\Resources;
 
 use App\Enums\EventAttendeeStatus;
 use App\Models\Event;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Illuminate\Support\Facades\Storage;
@@ -30,9 +31,19 @@ class EventResource extends JsonResource
                 ? Storage::disk('public')->url($this->cover_image_path)
                 : null,
             'location' => $this->location,
+            // Only on GET /events: the place mentions the viewer's city.
+            'is_near_you' => $this->when(
+                array_key_exists('near_you', $this->resource->getAttributes()),
+                fn () => (bool) $this->near_you,
+            ),
             'starts_at' => $this->starts_at?->toIso8601String(),
             'ends_at' => $this->ends_at?->toIso8601String(),
             'capacity' => $this->capacity,
+            'registration_fee' => $this->registration_fee !== null ? (float) $this->registration_fee : null,
+            'proposed_dates' => collect($this->proposed_dates ?? [])
+                ->map(fn (string $date) => Carbon::parse($date)->toIso8601String())
+                ->values(),
+            'reviews_count' => $this->whenCounted('reviews'),
             'status' => $this->status->value,
             'status_label' => $this->status->label(),
             'attendees_count' => $this->whenCounted('attendees'),

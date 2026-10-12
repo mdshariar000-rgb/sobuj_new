@@ -247,12 +247,14 @@ Returns the authenticated account, including two owner-only counts. Used by the 
     "location": { "latitude": 23.7469, "longitude": 90.3751 },
     "posts_count": 12,
     "active_listings_count": 3,
+    "followers_count": 41,
+    "following_count": 18,
     "created_at": "2026-01-04T10:02:00+00:00"
   }
 }
 ```
 
-`posts_count` and `active_listings_count` are present **only** on this endpoint and `PATCH /auth/me` (both explicitly load these counts) — they are absent from `UserResource` payloads returned elsewhere (e.g. embedded in a listing's `owner`).
+`posts_count` and `active_listings_count` are present **only** on this endpoint and `PATCH /auth/me` (both explicitly load these counts) — they are absent from `UserResource` payloads returned elsewhere (e.g. embedded in a listing's `owner`). `followers_count`/`following_count` are present here, on `PATCH /auth/me`, on `GET /users/{user}`, and on the `UserResource` returned by `POST`/`DELETE /users/{user}/follow` — see the Follow Graph section below. `is_following` is present on `GET /users/{user}` and the follow/unfollow responses (never here — following yourself is meaningless).
 
 **Errors:** `401` if the token is missing/invalid.
 
@@ -302,15 +304,19 @@ Revokes the Sanctum token used to authenticate this specific request (signs out 
 
 ### `DELETE /auth/me`
 
-Permanently deletes the caller's own account and personal data (profile, listings, posts, comments, events, chat messages, AI conversations, uploaded photos, device tokens). Requires the current password so a stolen token alone cannot wipe an account. Cancels any live Stripe subscription first. **Not** blocked by `not_suspended` — a suspended account can still delete itself.
+Permanently deletes the caller's own account and personal data (profile, listings, posts, comments, events, chat messages, uploaded photos, device tokens). Re-authentication is required, so a stolen token alone cannot wipe an account. **Not** blocked by `not_suspended`: a suspended account can still delete itself.
 
 Groups the caller created that still have other members are handed to another member (an existing admin, else the longest-standing member) rather than deleted; a group with no other members is deleted with its creator.
 
-**Request body**
+**Request body**: the password, **or** a fresh Google/Apple sign-in for the linked account (for accounts made with Google/Apple, `has_password: false`).
 
 | Field | Type | Required |
 |---|---|---|
-| `password` | string | Yes — the account's current password. |
+| `password` | string | Unless `id_token` is sent: the account's current password. |
+| `provider` | `google` \| `apple` | With `id_token`. |
+| `id_token` | string | A fresh ID token from that provider; its `sub` must match the account's linked ID. Accepted even if the provider has since been switched off in Settings. |
+| `nonce` | string | Apple: the raw nonce whose SHA-256 is in the token. |
+| `authorization_code` | string | Apple: the one-time code. When the Apple key is set in Settings, the server revokes the Sign in with Apple link. A failed revoke is logged and doesn't block deletion. |
 
 **Response `200 OK`**
 ```json
@@ -319,12 +325,12 @@ Groups the caller created that still have other members are handed to another me
 
 **Errors**
 
-`422` — missing or wrong password:
+`422` — missing or wrong password, or a token for a different Google/Apple account:
 ```json
 { "message": "The password is incorrect.", "errors": { "password": ["The password is incorrect."] } }
 ```
 
-`503` — the subscription could not be cancelled (or another failure occurred); the account is left untouched so the user isn't deleted while still being billed:
+`503` — the deletion failed on the server (or the provider's keys couldn't be fetched); the account is left untouched:
 ```json
 { "message": "Your account could not be deleted right now. Please try again shortly." }
 ```
@@ -430,23 +436,6 @@ Deletes the token row matching **both** the given `token` and the caller's own `
 
 ---
 
-## Config
-
-### `GET /config/stripe-key`
-
-Public, unauthenticated. Returns the live Stripe publishable key and the current Agri-AI Premium display prices, so the mobile app never hardcodes either at build time — an admin rotating the key or changing a price from the web panel takes effect immediately with no app update required.
-
-**Response `200 OK`**
-```json
-{
-  "publishable_key": "pk_live_51N...",
-  "monthly_price_usd": 9.99,
-  "annual_price_usd": 71.88
-}
-```
-
----
-
 ## Users
 
 ### `GET /users/{user}`
@@ -455,15 +444,56 @@ A grower's public profile, e.g. reached from "View Seller Profile" on a listing 
 
 **Path parameters:** `user` (integer, required) — the target user's id.
 
-**Response `200 OK`** — a `UserResource` object (see the shape under `GET /auth/me`, minus `email`/`phone`/`show_handover_radius`/`is_suspended`/`suspension_reason`/`posts_count`/`active_listings_count`, all of which are self-only or count-only fields not loaded on this endpoint).
+**Response `200 OK`**: a `UserResource` object (see the shape under `GET /auth/me`), minus the self-only fields `email`, `phone`, `show_handover_radius`, `is_suspended` and `suspension_reason`. It includes:
+- `followers_count` and `following_count`
+- `is_following`: whether the caller currently follows this user
+- `posts_count`: their Home feed posts that haven't been taken down, which is what their profile's Posts tab lists
+- `active_listings_count`
+- `seller_rating`: the average rating buyers gave their listings, to one decimal place. It's `null` when there are no reviews. Reviews from users the caller has blocked, or been blocked by, are left out.
+- `seller_reviews_count`
+- `completed_deals_count`: swap offers with status `completed`, whether this user was the seller or the buyer
 
-**Errors:** `404` if no such user.
+**Errors:** `404` if no such user, or if either side has blocked the other.
 
 ### `GET /users/{user}/listings`
 
 That user's **active** marketplace listings only (`status: active`), newest first. **Paginated**, 20/page.
 
 **Response `200 OK`** — paginated envelope of `ListingResource` objects (see Marketplace section below). `owner` is present on each item (relation is eager-loaded here, unlike `GET /listings`).
+
+---
+
+### `GET /users/{user}/posts`
+
+A profile's posts ("My Posts" / a grower's Posts tab), newest first, paginated. Only the user's posts in groups the viewer can see — active groups that are public or that the viewer belongs to. On your own profile it's every active group you posted in, including posts still awaiting a private group's approval (`approval_status: "pending"`). Each post includes its `group` (for the "in ⟨group⟩" label) and `can_share`. `404` if either user has blocked the other.
+
+---
+
+## Follow Graph
+
+A one-way social signal ("see more from this grower"), separate from group membership (bidirectional, carries a role) and from blocking (mutual, hides content both ways). Following a blocked (or blocking) account is impossible, same 404 as `GET /users/{user}`. Following someone new sends them a `user_followed` notification (see Notifications); re-following an already-followed user never re-notifies them.
+
+### `GET /users/suggested`
+
+Growers to follow during onboarding, up to 20: the nearest ones within 100 km of the caller's registered location first, then the most active growers anywhere. Never the caller, anyone they already follow, anyone blocked either way, or suspended accounts. Not paginated. Each entry is a `UserResource` including `posts_count`.
+
+### `POST /users/{user}/follow` · `DELETE /users/{user}/follow`
+
+Follows / unfollows a user. Idempotent.
+
+**Path parameters:** `user` (integer, required) — the target user's id.
+
+**Response `200 OK`** — a `UserResource` for `{user}` with fresh `followers_count`/`following_count` and `is_following` reflecting the caller's new state.
+
+**Errors:** `422` when following yourself — `{"errors": {"user": ["You cannot follow yourself."]}}`. `404` if no such user, or if either side has blocked the other.
+
+### `GET /users/{user}/followers` · `GET /users/{user}/following`
+
+`{user}`'s followers, or the accounts `{user}` follows, most recently followed first. **Paginated**, 50/page. Any user the caller has blocked (or who has blocked the caller) is excluded from either list, same as the Home Feed.
+
+**Response `200 OK`** — paginated `UserResource` collection.
+
+**Errors:** `404` if no such user, or if the caller and `{user}` have blocked each other.
 
 ---
 
@@ -488,6 +518,24 @@ The full admin-managed category list (used to populate the "create listing" cate
 ```
 
 `listing_type` on a listing is a free-form string matched against this table's `name` column (`Rule::exists`), not a fixed enum — an admin can add/rename categories at any time from the web panel.
+
+---
+
+### `GET /sowing-guide`
+
+The UK sowing guide behind the app's "What can you grow now?" screen: all 12 months, in order, not paginated. Admins edit each month's two plant lists in the web panel (Content → What Can You Grow); months are never added or removed. The app picks the current month from the phone's date.
+
+**Response `200 OK`**
+```json
+{
+  "data": [
+    { "month": 1, "outdoors": ["Garlic", "Broad beans (mild areas)"], "under_cover": ["Onions from seed", "Sweet peas", "Chillies", "Microgreens"] },
+    { "month": 2, "outdoors": ["Garlic", "Shallots"], "under_cover": ["Tomatoes"] }
+  ]
+}
+```
+
+Either list can be empty.
 
 ---
 
@@ -613,9 +661,11 @@ Creates a new marketplace listing. `multipart/form-data` when uploading photos.
 
 Increments `views_count` unless the viewer is the listing's own owner (self-views never count).
 
-**Response `200 OK`** — a `ListingResource` object, with `is_saved` computed live for the caller.
+**Response `200 OK`**: a `ListingResource` object. It has `is_saved` computed live for the caller, plus `can_review`, which is `true` only when the caller completed a deal (a swap offer with status `completed`) for this listing.
 
 **Errors:** `404` if the listing is `deleted` and the caller isn't its owner (owners may still view their own deleted listings).
+
+**Reviews** (`POST /listings/{listing}/reviews`): a new review needs a completed deal for the listing, and returns `422` (`listing`) otherwise. Editing a review the caller already left is still allowed.
 
 ---
 
@@ -658,7 +708,7 @@ Bookmarks / un-bookmarks a listing for the caller. Both are idempotent (saving a
 
 ### `POST /listings/{listing}/swap-offers`
 
-Opens (or reuses) a negotiation thread on a listing.
+Opens (or reuses) a negotiation thread on a listing. A new offer sends the listing owner a `swap_offer_received` notification (`data.swap_offer_id`, `data.listing_id`), whose body is the offer's note when one is given.
 
 **Request body**
 
@@ -739,9 +789,21 @@ Advances the offer through its state machine. Every transition posts an auto-gen
 | `accepted` | `completed`, `canceled` | `completed`, `canceled` |
 | `declined` / `completed` / `canceled` | — (terminal) | — (terminal) |
 
-**Response `200 OK`** — updated `SwapOfferResource`.
+**Response `200 OK`**: the updated `SwapOfferResource`.
 
-**Errors:** `403` for any transition not in the table above, e.g. a requester trying to `accept` their own still-`pending` offer.
+**The listing follows the deal:**
+
+| Change | Listing status | Other effects |
+|---|---|---|
+| Offer `accepted` | `active` → `reserved` | Drops out of browsing and the Home feed. |
+| Accepted offer `canceled` | `reserved` → `active` | Only if no other offer on the listing is still accepted. |
+| Offer `completed` | → `completed` | Every other open offer on the listing (`pending`, `countered` or `accepted`) is set to `declined` with a system message. Each of those requesters gets a `swap_offer_updated` notification. |
+
+On every change, the other party gets a `swap_offer_updated` notification with `data.swap_offer_id` and `data.listing_id`. When the seller marks a deal `completed`, the buyer's notification asks them to leave a review.
+
+**Errors:**
+- `403` for any transition not in the table above, e.g. a requester trying to `accept` their own still-`pending` offer.
+- `422` (`status`) when accepting an offer on a listing that's already `reserved` for another offer, or is no longer available.
 
 ---
 
@@ -760,6 +822,7 @@ The offer's chat thread. **Paginated**, 50/page — returns the **most recent** 
       "message_type": "system_event",
       "body": "Amina Rahman made an offer on \"Cherry Tomato Seedlings\".",
       "image_url": null,
+      "image_urls": [],
       "sender": null,
       "created_at": "2026-09-19T08:25:00+00:00"
     },
@@ -768,13 +831,23 @@ The offer's chat thread. **Paginated**, 50/page — returns the **most recent** 
       "swap_offer_id": 88,
       "message_type": "text",
       "body": "Sure, that works!",
-      "image_url": null,
+      "image_url": "https://codecell.site/storage/swap-offers/88/a1.jpg",
+      "image_urls": [
+        "https://codecell.site/storage/swap-offers/88/a1.jpg",
+        "https://codecell.site/storage/swap-offers/88/b2.jpg"
+      ],
       "sender": { "...": "UserResource" },
       "created_at": "2026-09-19T08:31:00+00:00"
     }
   ]
 }
 ```
+
+`image_urls` lists every photo on the message, in the order sent (`[]` for text-only). `image_url` is the first photo (or `null`), kept for older app builds that only show one.
+
+Every message also has `reply_to_id` (the message it replies to, or `null`) and `reply_to`, a compact quote of that message: `{ "id", "body", "sender_name", "image_url", "image_count" }`. `reply_to` is `null` when the message isn't a reply, **and** when it is one but the quoted message has since been deleted or (in group chat) is from a user the caller has blocked or been blocked by. In that case the app shows "Original message unavailable".
+
+`reactions` lists emoji reactions grouped by emoji, in the order each was first used: `[{ "emoji": "❤️", "count": 2, "user_ids": [7, 12] }]` (`[]` when none). There's no per-viewer "mine" flag: the app compares `user_ids` with the signed-in user, so the same payload also works over the realtime channel.
 
 **Errors:** `403` if the caller is neither party to the offer.
 
@@ -788,10 +861,25 @@ Sends a chat message on the thread — works even on a terminal (`declined`/`com
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `body` | string | Conditional | Max 2000. Required unless `image` is present. |
-| `image` | file | Conditional | JPEG/PNG/WebP, max 8192 KB. Required unless `body` is present. An image-only message with no caption is valid. |
+| `body` | string | Conditional | Max 2000. Required unless a photo (`images[]` or `image`) is present. |
+| `images[]` | file[] | Conditional | Up to 10 photos, each JPEG/PNG/WebP, max 8192 KB. Sent as repeated `images[]` multipart fields. A photo-only message with no caption is valid. |
+| `image` | file | No | Legacy single photo (older app builds). Counted together with `images[]` toward the 10-photo limit. |
+| `reply_to_id` | integer | No | Makes this a reply. Must be the id of a message in this same thread (`422` otherwise). |
 
-**Response `201 Created`** — the new `MessageResource`. The other party receives a push notification (`swap_message_received`) with preview text `Str::limit(body, 100)`, or the literal `"📷 Photo"` if the message is image-only.
+**Response `201 Created`** — the new `MessageResource`. The other party receives a push notification (`swap_message_received`) with preview text `Str::limit(body, 100)`, or `"📷 Photo"` / `"📷 3 photos"` if the message has no caption.
+
+**Errors:** `422` on `images` if more than 10 photos are sent.
+
+---
+
+### `PUT /swap-offers/{swapOffer}/messages/{message}/reaction`
+### `DELETE /swap-offers/{swapOffer}/messages/{message}/reaction`
+
+Sets (`PUT`, body `{ "emoji": "👍" }`) or removes (`DELETE`) the caller's reaction on a message in the thread. One reaction per person per message: a `PUT` with a different emoji replaces the old one. Allowed emoji: 👍 ❤️ 😂 😮 😢 🙏.
+
+**Response `200 OK`** — `{ "data": { "message_id": 302, "reactions": [ ... ] } }`, the message's full new `reactions` (same shape as on the message). The other party gets the same payload live as a `message.reacted` event on `private-swap.{swapOfferId}`.
+
+**Errors:** `403` if the caller isn't a party to the offer or there's a block between the two; `404` if the message isn't in this thread; `422` for any other emoji.
 
 ---
 
@@ -800,6 +888,10 @@ Sends a chat message on the thread — works even on a terminal (`declined`/`com
 ### `GET /group-categories`
 
 Full admin-managed list, not paginated. Shape identical to `GET /listing-categories`.
+
+### `GET /groups/suggested`
+
+Public groups for the onboarding "Join a few groups" step, up to 20, not paginated. Groups the caller is already in come first with `is_member: true` (registration auto-joins their town, interest, growing-setup and experience groups), then the biggest others (`members_count` included).
 
 ### `GET /groups`
 
@@ -1043,6 +1135,7 @@ The group's real-time chat. **Paginated**, 50/page, most-recent-first fetched th
       "group_id": 12,
       "body": "See everyone Saturday!",
       "image_url": null,
+      "image_urls": [],
       "sender": { "...": "UserResource" },
       "sender_is_admin": false,
       "created_at": "2026-09-18T14:02:00+00:00"
@@ -1057,7 +1150,7 @@ The group's real-time chat. **Paginated**, 50/page, most-recent-first fetched th
 
 ### `POST /groups/{group}/messages`
 
-**Request body** — identical shape to `POST /swap-offers/{swapOffer}/messages` (`body`/`image`, at least one required).
+**Request body** — identical shape to `POST /swap-offers/{swapOffer}/messages` (`body` and/or up to 10 `images[]`, plus the legacy single `image`; at least a body or one photo; optional `reply_to_id`, which must be a message in this group). `image_urls`/`image_url` and `reply_to_id`/`reply_to` in the response work the same way too.
 
 **Response `201 Created`** — the new `GroupMessageResource`. Every other member is notified (`group_message_received`, batched into one multicast push).
 
@@ -1065,9 +1158,18 @@ The group's real-time chat. **Paginated**, 50/page, most-recent-first fetched th
 
 ---
 
+### `PUT /groups/{group}/messages/{groupMessage}/reaction`
+### `DELETE /groups/{group}/messages/{groupMessage}/reaction`
+
+Same as the swap-offer reaction endpoints, for group chat; the live event is `message.reacted` on `private-group.{groupId}`. In `GET /groups/{group}/messages`, reactions from users the caller has blocked (or been blocked by) are left out.
+
+**Errors:** `403` if the caller isn't a member; `404` if the message isn't in this group or is from a blocked user; `422` for any other emoji.
+
+---
+
 ### `GET /groups/{group}/posts`
 
-The group's discussion-thread posts (separate from the general Home Feed — see below). **Paginated**, 20/page, newest first.
+The group's discussion-thread posts. **Paginated**, 20/page, newest first.
 
 A non-admin member sees only `approved` posts plus their own pending/rejected ones; the group's admin sees every post regardless of moderation state.
 
@@ -1077,72 +1179,55 @@ A non-admin member sees only `approved` posts plus their own pending/rejected on
 
 ---
 
-## Community Feed
+## Posts
 
-### `GET /feed`
+Posts live in groups only — there is no personal timeline. A group's posts are listed by `GET /groups/{group}/posts`; a person's posts by `GET /users/{user}/posts`.
 
-The general Home Feed — posts with no `group_id`, newest first. **Paginated**, 20/page.
+### `GET /feed/marketplace`
 
-**Query parameters**
+The marketplace listings the app mixes into the Home feed. They're kept separate from `GET /feed`, so the posts' pagination and ordering are unaffected.
 
-| Param | Type | Required | Notes |
-|---|---|---|---|
-| `search` | string | No | Matches against post body or author name. |
-| `author_id` | integer | No | Narrows to one author's posts — powers "My Posts" on a profile. |
-| `category` | string | No | Must match a `post_categories.name` row. Omitted = every category. |
-
-**Response `200 OK`** — paginated `PostResource` collection.
-
+**Response `200 OK`**
 ```json
 {
-  "data": [
-    {
-      "id": 3021,
-      "group_id": null,
-      "body": "My first tomato harvest of the season! 🍅",
-      "category": "Harvests",
-      "approval_status": "approved",
-      "image_url": "https://codecell.site/storage/posts/....jpg",
-      "comments_count": 6,
-      "likes_count": 24,
-      "liked_by_me": true,
-      "author": { "...": "UserResource" },
-      "group": null,
-      "created_at": "2026-09-18T07:00:00+00:00",
-      "updated_at": "2026-09-18T07:00:00+00:00"
-    }
-  ]
+  "data": {
+    "location_label": "Leeds",
+    "nearby": [ /* ListingResource, up to 10 */ ],
+    "from_following": [ /* ListingResource, up to 10 */ ]
+  }
 }
 ```
 
-`comments` (an embedded `CommentResource[]`) is only populated on `GET /posts/{post}` (see below), where the `comments` relation is eager-loaded — it's absent elsewhere.
+- `nearby`: active listings near the caller's registration location, used for the "Fresh near you" carousel.
+  - It includes listings posted in the last 14 days within 40 km. When that finds fewer than 4, it widens to 60 days and 100 km.
+  - It's ranked by distance, then how recent the listing is, then a match with the caller's `growing_interests`.
+  - It has at most 2 listings per seller.
+  - It leaves out the caller's own listings, listings they've already saved, and anything that's also in `from_following`.
+  - It's `[]` if the caller has no location.
+- `from_following`: active listings from growers the caller follows, posted in the last 14 days at any distance, newest first. The app shows them in the feed as "<name> listed a new item".
+- Both lists:
+  - leave out blocked users (in either direction), suspended sellers and banned listings
+  - include `is_saved`
+  - include `distance_km` when the caller has a location and the seller shows their handover radius
 
----
-
-### `GET /post-categories`
-
-Full admin-managed list, not paginated. Backs the Home tab's Recent/Disease Alerts/Harvests filter chips.
-
----
 
 ### `POST /posts`
 
-Creates a post — into the general feed if `group_id` is omitted, or into a group's discussion thread if set. `multipart/form-data` for image uploads.
+Creates a post in a group's discussion thread (the poster must be a member). `multipart/form-data` for image uploads.
 
 **Request body**
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `group_id` | integer \| null | No | Must reference an existing group. Poster must already be a member. |
+| `group_id` | integer | Yes | Must reference an existing, active group. Poster must already be a member. |
 | `body` | string | Yes | Max 5000. |
-| `category` | string \| null | No | Must match a `post_categories.name` row. Defaults to `"General"`. |
 | `image` | file | No | JPEG/PNG/WebP, max 8192 KB. |
 
-**Moderation note:** a non-admin member's post into a **private** group starts `approval_status: pending` (invisible to the rest of the group until a group admin approves it). Every other case — Home Feed post, public-group post, or the group's own admin posting — is approved immediately.
+**Moderation note:** a non-admin member's post into a **private** group starts `approval_status: pending` (invisible to the rest of the group until a group admin approves it). Every other case — a public-group post, or the group's own admin posting — is approved immediately.
 
 **Response `201 Created`** — a `PostResource`, `liked_by_me: false`.
 
-**Errors:** `422` if `group_id` is set but the caller isn't a member:
+**Errors:** `422` if `group_id` is missing, or the caller isn't a member:
 ```json
 { "errors": { "group_id": ["You must be a member of this group to post in it."] } }
 ```
@@ -1166,7 +1251,6 @@ Only the post's own author may edit it — `group_id`, `author`, and moderation/
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `body` | string | No | Max 5000. |
-| `category` | string \| null | No | Must match `post_categories.name`; `null` resets to `"General"`. |
 | `image` | file | No | New image replaces (and deletes) the old one. |
 | `remove_image` | boolean | No | Clears the image without uploading a new one. |
 
@@ -1428,7 +1512,7 @@ Idempotent bookmark / un-bookmark.
 
 ## Notifications
 
-The in-app notification inbox, backing the bell icon shown on the Home, Events, and Groups tabs. Every mutating action elsewhere in this API (like, comment, reply, swap message, group message) writes a row here and pushes via FCM.
+The in-app notification inbox, backing the bell icon shown on the Home, Events, and Groups tabs. Every mutating action elsewhere in this API (like, comment, reply, swap message, group message, follow) writes a row here and pushes via FCM.
 
 ### `GET /notifications`
 
@@ -1454,7 +1538,7 @@ The in-app notification inbox, backing the bell icon shown on the Home, Events, 
 }
 ```
 
-`type` is one of: `post_liked`, `post_commented`, `comment_replied`, `swap_message_received`, `group_message_received`.
+`type` is one of: `post_liked`, `post_commented`, `comment_replied`, `swap_message_received`, `group_message_received`, `user_followed`.
 
 ---
 
@@ -1488,151 +1572,78 @@ Idempotent — marking an already-read notification read again is a no-op (the t
 
 ---
 
-## AI Assistant (Agri-AI)
+## October 2026 additions
 
-**Every endpoint in this section requires an active Agri-AI subscription** (trialing counts) — including reading past conversation history. A non-subscriber hitting any `/ai/*` route gets:
+### Sign-up and profile
+- `POST /auth/register` and `PATCH /auth/me` accept `growing_interests` (array of strings). On register each value must be one of: `Learning to garden`, `Buyer`, `Seller`, `Garden Project`, `Community Engagement`, `Sustainability`, `Community Gardening`, `Wildlife & Biodiversity`, `Research & Education` (see `App\Support\Interests`).
+- `growing_setup` accepts a new value: `allotment`.
+- Registering, or changing `location_label`, `growing_interests`, `growing_setup` or `experience_level`, adds the user to matching automatic groups (see `AutoGroupService`): their town (the last part of `location_label` before the country), each listed interest, "`<Setup>` Growers" and "`<Level>` Growers". These groups have `creator: null` and `auto_type` set (`location`, `interest`, `growing_setup`, `experience_level`).
 
-```json
-{ "message": "An active Agri-AI subscription is required." }
-```
-Status `403`, checked before any other authorization.
+### `POST /auth/forgot-password` (no auth, 5/min)
+Body `{ "email" }`. Emails a 6-digit code valid for 30 minutes. Always returns 200 with the same message, whether or not the account exists. Needs working `MAIL_*` settings.
 
-### `GET /ai/conversations`
+### `POST /auth/reset-password` (no auth, 10/min)
+Body `{ "email", "code", "password", "password_confirmation" }`. 422 on `code` if it's wrong or expired; five wrong tries invalidate the code. On success the password changes and every API token for the account is revoked.
 
-The caller's own AI conversations, newest first. **Paginated**, 20/page. `messages` is `[]` on this list endpoint (not eager-loaded here).
+### Groups
+- `POST /groups` is now **admin-only** (403 for everyone else).
+- `POST /group-requests` — body `{ "name", "description"? }` → 201. Shown to admins on **Moderation → Group Requests**, where *Approve & create group* creates a public group with the requester as its admin.
+- Group objects include `auto_type` (null for ordinary groups).
 
-**Response `200 OK`**
-```json
-{
-  "data": [
-    { "id": 44, "title": null, "messages": [], "created_at": "2026-09-18T06:00:00+00:00", "updated_at": "2026-09-18T06:05:00+00:00" }
-  ]
-}
-```
+### Events
+- Create/update accept `registration_fee` (number ≥ 0, nullable; informational — paid at the event) and `proposed_dates` (array of up to 10 dates). Both are returned on event objects (`registration_fee` as a number or null, `proposed_dates` as ISO-8601 strings).
+- `GET /events?for_you=1` — same list, but events in the user's groups or hosted by people they follow come first.
+- `GET /events/mine?status=draft` — the caller's own events (any status if omitted), most recently updated first.
+- New categories: Open Day, Seed Swap, Plant Fair, Nature Walk, Other.
+- `GET /events/{event}/reviews` — newest first, paginated, blocked users hidden.
+- `POST /events/{event}/reviews` — body `{ "rating"?: 1–5, "body"?: string }`, at least one required. Published events only (404 for drafts).
+- `DELETE /events/{event}/reviews/{review}` — author or admin only.
 
----
+### Search
+- `GET /search?q=` (2–100 chars) → `{ data: { listings, members, groups } }`. Listings match title/variety/description or the seller's location; members match name/username/location; groups match name/description. The term is saved to the user's history (last 20 kept).
+- `GET /search/suggest?q=` (1–100 chars) → `{ data: { terms: [{ text, type }], listings, members, groups } }` — live suggestions while typing; **not** saved to history. `terms` (max 6) are the user's matching past searches (`type: "history"`), titles of browsable items (`"item"`, starting-with matches first) and towns from members' addresses (`"place"`), de-duplicated. `listings`/`members`/`groups` are the top 3 of each, same rules as `/search`.
+- `GET /search/history` → `{ data: [terms…] }`, newest first. `DELETE /search/history` clears it.
+- `GET /feed/marketplace` now also returns `for_you`: up to 20 newest listings matching the user's last 5 searches.
 
-### `GET /ai/conversations/{conversation}`
+### Event chat
+- `GET /events/{event}/chat` → the event's conversation as a group object (`event_id` set). Only the host and attendees whose RSVP is `going` may open it (403 otherwise); drafts 404. It's created on first open and its members are kept in sync: RSVPing `going` adds you, switching to `interested` or cancelling removes you.
+- Messages, photos, replies, reactions, read state and live updates use the ordinary group chat endpoints (`/groups/{group}/messages…`) and the `group.{id}` channel.
+- Event chats never appear in `GET /groups`, `GET /groups/suggested` or search, and can't be joined with `POST /groups/{group}/join`. Deleting the event deletes its chat.
 
-Owner-only — **no admin bypass** on this policy, unlike every other resource in this API. Messages are loaded oldest-first.
+### Full UK address
+- `POST /auth/register` now **requires** `address_line1`, `address_city` and `address_postcode` (a valid UK postcode in any spacing/case — stored tidied, e.g. `LS6 3AA`); `address_line2` and `address_county` are optional. The app still sends `latitude`/`longitude`/`location_label`, now taken from the postcode.
+- `PATCH /auth/me` accepts the same `address_*` fields (each required if sent, so it can't be blanked) plus `latitude` + `longitude` together, which move the account's map location.
+- `GET /auth/me` (and every other "self" user payload) includes `address: {line1, line2, city, county, postcode}` and `needs_address` (true for older accounts with no postcode — the app asks for it before anything else). Other users never receive `address`; admins see and edit it on the Users page.
 
-**Response `200 OK`**
-```json
-{
-  "data": {
-    "id": 44,
-    "title": null,
-    "messages": [
-      { "id": 210, "conversation_id": 44, "role": "user", "body": "My tomato leaves have yellow spots, what's wrong?", "image_url": "https://codecell.site/storage/ai-uploads/44/....jpg", "created_at": "2026-09-18T06:00:00+00:00" },
-      { "id": 211, "conversation_id": 44, "role": "assistant", "body": "That pattern is consistent with early blight...", "image_url": null, "created_at": "2026-09-18T06:00:04+00:00" }
-    ],
-    "created_at": "2026-09-18T06:00:00+00:00",
-    "updated_at": "2026-09-18T06:00:04+00:00"
-  }
-}
-```
+### Address suggestions (OpenStreetMap)
+No auth — used at sign-up. Free, no key: UK addresses from OpenStreetMap via Photon (`PHOTON_URL`, default the public `https://photon.komoot.io`).
+- `GET /addresses/suggest?q=` (3–100 chars, 60/min per IP) → `{ data: [{ id, address, line1, line2, city, county, postcode, latitude, longitude }] }`, up to 6 UK houses/streets. Each suggestion is the whole address — there's no separate "get" call. For a street-only match, a house number at the start of `q` is kept in `line1`. `postcode` can be null. Cached for an hour per term.
+- 503 when Photon is unreachable; the app then hides the search box and the address is typed by hand. The app must show "© OpenStreetMap contributors" with the suggestions (ODbL).
 
-**Errors:** `403` (subscription gate) or `403` `{"message": "This action is unauthorized."}` (not the owner) — the subscription check runs first, so a non-subscriber always sees the subscription message even for someone else's conversation id. `404` if the id doesn't exist.
+### Address from postcode (Ideal Postcodes)
+No auth (used at sign-up), 20/min per IP. Royal Mail addresses via Ideal Postcodes; the API key is set on the admin **Settings** page. Each postcode is cached for 24 h.
+- `GET /addresses/postcode?postcode=LS6 3AA` (any spacing/case) → `{ data: [{ id, address, line1, line2, city, county, postcode, latitude, longitude }] }`, every address at that postcode. `line2` joins Royal Mail's lines 2–3 and can be null; `city` is title-cased.
+- `404` `{"message": "We couldn't find that postcode. Please check it."}` for a postcode that doesn't exist (free at Ideal Postcodes).
+- `422` for a malformed postcode (no paid call is made).
+- `503` `{"message": "Address lookup is unavailable right now."}` when no key is set, credits have run out, or the service is down. The app then fills the town from postcodes.io and asks for the street.
 
----
+### Sign in with Google / Apple
+- `GET /config/social` (no auth) → `{ data: { google: { enabled, ios_client_id, server_client_id }, apple: { enabled } } }`. These are the switches and Google's public client IDs from the admin **Settings** page (both off by default). The Apple private key is never returned.
+- `POST /auth/social` (no auth, 20/min per IP). Body: `provider` (`google`|`apple`), `id_token`, optional `nonce` (Apple, raw), `name`, `device_name`.
+  - The token is verified against the provider's published keys (signature, expiry, issuer, audience; Apple nonce).
+  - **Existing account** (matching `google_id`/`apple_id`, or a verified email, which gets linked) → `200` with the same shape as `/auth/login`, plus `is_new_user: false`.
+  - **New person** → `200 { needs_signup: true, email, name }`. Call again adding `name`, the `address_*` fields, `latitude`, `longitude` (and optionally `location_label`, `experience_level`, `growing_setup`, `growing_interests`, with the same rules as `/auth/register`) → `201` with the user, token and `is_new_user: true`. The account gets `has_password: false` until a password is set with *Forgot password*.
+  - `401` invalid, expired or wrong-app token, or the provider is switched off (`"Google sign-in isn't set up yet."`); `403` suspended account; `422` no email from the provider, or validation errors; `503` the provider's keys couldn't be fetched.
+- Self user payloads add `has_password` and `signed_in_with` (e.g. `["google"]`).
+- `POST /auth/reset-password` now also sets `has_password: true`.
 
-### `POST /ai/messages`
+### Share pages (web)
+- `GET /l/{id}` and `GET /u/{id}` (HTML, no auth): a listing or profile preview with Open Graph tags and *Get it for iPhone / Android* buttons (links from Settings → App Download Links). Only public fields are shown; a closed listing or suspended account shows a fallback.
 
-Sends a message — starts a new conversation if `conversation_id` is omitted, or continues an existing one. `multipart/form-data` for photo-based questions (e.g. leaf-disease diagnosis).
+## Removed features (October 2026)
 
-**Request body**
+The **Agri-AI assistant** with its **Premium subscription**, and the **personal Home timeline** (posts outside groups, post categories, re-sharing posts to the timeline), were removed — code, admin pages and data. So that older app builds show a readable message instead of failing, these endpoints still exist and answer **`410 Gone`** with `{"message": "This feature is no longer available. Please update the app."}`:
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `conversation_id` | integer \| null | No | Must belong to the caller. Omit to start a new conversation. |
-| `body` | string | Conditional | Max 4000. Required unless `photo` is present. |
-| `photo` | file | Conditional | JPEG/PNG/WebP, max 8192 KB. Required unless `body` is present — a bare photo upload with no caption is a valid "diagnose this" request. |
+`GET /config/stripe-key`, `GET /ai/conversations`, `GET /ai/conversations/{conversation}`, `POST /ai/messages`, `GET /subscriptions/me`, `POST /subscriptions`, `DELETE /subscriptions/me`, `GET /feed`, `GET /post-categories`, `POST /posts/{post}/share`.
 
-**Response `201 Created`** — the full `AiConversationResource`, including the newly appended user message and the assistant's synchronous reply.
-
-**Errors**
-
-`422` — neither field present:
-```json
-{
-  "message": "The given data was invalid.",
-  "errors": {
-    "body": ["The body field is required when photo is not present."],
-    "photo": ["The photo field is required when body is not present."]
-  }
-}
-```
-
-`403` — subscription gate, same shape as above.
-
-`500` — the AI backend (Gemini) call fails or returns a non-2xx response; there is no custom "AI service unavailable" error surfaced here, it presents as a generic server error.
-
----
-
-## Subscriptions & Billing
-
-Agri-AI Premium is powered by Stripe via Laravel Cashier. Payment method tokenization happens client-side (Stripe's mobile SDK) — raw card data never passes through this server.
-
-### `GET /subscriptions/me`
-
-Not subscription-gated — this is how the client determines whether the AI features are locked.
-
-**Response `200 OK`**
-```json
-{
-  "data": {
-    "has_access": true,
-    "plan": "monthly",
-    "status": "trialing",
-    "on_trial": true,
-    "trial_ends_at": "2026-09-26T08:00:00+00:00",
-    "cancel_at_period_end": false,
-    "renews_at": "2026-09-26T08:00:00+00:00",
-    "ends_at": null
-  }
-}
-```
-
-`plan` is `"monthly"` | `"annual"` | `null` (no subscription, or the stored Stripe price no longer matches either configured plan).
-
----
-
-### `POST /subscriptions`
-
-Starts a new subscription with a 7-day free trial.
-
-**Request body**
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `plan` | string | Yes | `monthly` or `annual`. |
-| `payment_method` | string | Yes | A Stripe PaymentMethod id (`pm_...`) already tokenized on-device. |
-
-**Response `201 Created`** — a `SubscriptionResource` (same shape as `GET /subscriptions/me`).
-
-**Response `202 Accepted`** — 3-D Secure confirmation required; the mobile app must complete it client-side using the given secret, then the subscription activates automatically via Stripe webhook (no re-call of this endpoint needed):
-```json
-{
-  "requires_action": true,
-  "payment_intent_client_secret": "pi_3P...secret_xyz"
-}
-```
-
-**Errors**
-
-`503` — no Stripe price configured yet for the requested plan (admin hasn't set one up):
-```json
-{ "message": "Subscription plans are not configured yet. Please try again shortly." }
-```
-
-`422` — invalid `plan` value or missing `payment_method`.
-
-`500` — any other Stripe API error (card declined, invalid payment method, etc.) is not specially handled and surfaces as a generic server error.
-
----
-
-### `DELETE /subscriptions/me`
-
-Cancels **at the end of the current paid (or trial) period** — the caller keeps access until then; this is not an immediate revocation. Idempotent (no error if there's no subscription, or it's already canceled).
-
-**Response `200 OK`** — the refreshed `SubscriptionResource`, now with `cancel_at_period_end: true` and `ends_at` populated.
+Other changes that came with it: `POST /posts` now **requires** `group_id` and no longer takes `category`; `PATCH /posts/{post}` no longer takes `category`; posts no longer carry `category`, `is_share`, `shared_post` or `shares_count`. `can_share` now means "offer Share to other apps" (only approved posts in public groups). `GET /feed/marketplace` (Home's "Picked for you") is unaffected.

@@ -1,6 +1,6 @@
 {
-    "name": "shobuj_mobile",
-    "short_name": "shobuj_mobile",
+    "name": "Shobuj",
+    "short_name": "Shobuj",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

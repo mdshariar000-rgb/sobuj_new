@@ -7,6 +7,7 @@ import '../../providers/group_providers.dart';
 import '../../theme/app_colors.dart';
 import '../../widgets/user_avatar.dart';
 import '../discovery/seller_profile_screen.dart';
+import '../../widgets/shimmer.dart';
 
 /// The group admin/creator's real moderation queue for pending requests to
 /// join a private group — see GET/PATCH /groups/{id}/join-requests on the
@@ -45,9 +46,14 @@ class GroupJoinRequestsScreen extends ConsumerWidget {
         title: const Text('Join Requests'),
         backgroundColor: AppColors.forestDark,
         foregroundColor: Colors.white,
+        // The theme's title style carries its own dark color, which beats
+        // foregroundColor — set white explicitly for this dark bar.
+        titleTextStyle: Theme.of(
+          context,
+        ).appBarTheme.titleTextStyle?.copyWith(color: Colors.white),
       ),
       body: requestsAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const ShimmerCardList(thumbSize: 44, roundThumb: true),
         error: (error, _) => Center(child: Text('$error')),
         data: (requests) {
           if (requests.isEmpty) {

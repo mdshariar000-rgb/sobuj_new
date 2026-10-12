@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Enums\GroupStatus;
 use App\Enums\GroupVisibility;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -44,6 +45,20 @@ class Group extends Model
             'verified_at' => 'datetime',
             'pinned_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Groups people browse and search for — not events' hidden chat groups
+     * (see EventChatService).
+     */
+    public function scopeListed(Builder $query): Builder
+    {
+        return $query->whereNull('groups.event_id');
+    }
+
+    public function isEventChat(): bool
+    {
+        return $this->event_id !== null;
     }
 
     public function isPrivate(): bool

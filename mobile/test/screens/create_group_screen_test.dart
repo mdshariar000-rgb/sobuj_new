@@ -48,9 +48,7 @@ void main() {
         findsOneWidget,
       );
 
-      await tester.tap(
-        find.byKey(const Key('create-group-category-field')),
-      );
+      await tester.tap(find.byKey(const Key('create-group-category-field')));
       await tester.pumpAndSettle();
 
       expect(find.text('Vegetable Growing'), findsOneWidget);
@@ -90,9 +88,7 @@ void main() {
         'tomato-growers',
       );
 
-      await tester.tap(
-        find.byKey(const Key('create-group-category-field')),
-      );
+      await tester.tap(find.byKey(const Key('create-group-category-field')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Vegetable Growing').last);
       await tester.pumpAndSettle();
@@ -104,36 +100,35 @@ void main() {
     },
   );
 
-  testWidgets(
-    'creating a group without picking a category sends no category',
-    (tester) async {
-      final fakeClient = FakeApiClient()
-        ..createGroupResult = Group(
-          id: 1,
-          name: 'Tomato Growers',
-          slug: 'tomato-growers',
-          isMember: true,
-          createdAt: DateTime(2026, 1, 1),
-        );
-
-      await _pumpCreateGroupScreen(tester, fakeClient);
-
-      await tester.enterText(
-        find.byKey(const Key('create-group-name-field')),
-        'Tomato Growers',
-      );
-      await tester.pump();
-      await tester.enterText(
-        find.byKey(const Key('create-group-slug-field')),
-        'tomato-growers',
+  testWidgets('creating a group without picking a category sends no category', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient()
+      ..createGroupResult = Group(
+        id: 1,
+        name: 'Tomato Growers',
+        slug: 'tomato-growers',
+        isMember: true,
+        createdAt: DateTime(2026, 1, 1),
       );
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
-      await tester.pumpAndSettle();
+    await _pumpCreateGroupScreen(tester, fakeClient);
 
-      expect(fakeClient.lastCreateGroupCategory, isNull);
-    },
-  );
+    await tester.enterText(
+      find.byKey(const Key('create-group-name-field')),
+      'Tomato Growers',
+    );
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const Key('create-group-slug-field')),
+      'tomato-growers',
+    );
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.lastCreateGroupCategory, isNull);
+  });
 
   testWidgets(
     'defaults to a public group, and toggling Private sends that real '
@@ -157,10 +152,7 @@ void main() {
         const Key('create-group-private-switch'),
       );
       expect(privateSwitch, findsOneWidget);
-      expect(
-        tester.widget<SwitchListTile>(privateSwitch).value,
-        isFalse,
-      );
+      expect(tester.widget<SwitchListTile>(privateSwitch).value, isFalse);
 
       await tester.enterText(
         find.byKey(const Key('create-group-name-field')),

@@ -291,9 +291,9 @@ class _CreateGroupScreenState extends ConsumerState<CreateGroupScreen> {
                   const SizedBox(height: 8),
                   Text(
                     'Group Emblem',
-                    style: Theme.of(
-                      context,
-                    ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                   const Text(
                     'Optional — tap to add a small logo or badge',

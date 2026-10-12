@@ -37,7 +37,9 @@ Listing _buildListing({required int id, required String title, double? price}) {
     id: id,
     title: title,
     listingType: 'Seeds & Scions',
-    transactionType: price != null ? TransactionType.sell : TransactionType.swap,
+    transactionType: price != null
+        ? TransactionType.sell
+        : TransactionType.swap,
     status: ListingStatus.active,
     price: price,
     isSaved: true,

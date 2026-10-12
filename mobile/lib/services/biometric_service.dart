@@ -24,7 +24,7 @@ class BiometricService {
   Future<bool> authenticate() async {
     try {
       return await _auth.authenticate(
-        localizedReason: 'Sign in to Agro Hub',
+        localizedReason: 'Sign in to Shobuj',
         options: const AuthenticationOptions(stickyAuth: true),
       );
     } catch (_) {

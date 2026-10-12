@@ -4,18 +4,22 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\GroupMemberRole;
 use App\Enums\NotificationType;
+use App\Events\GroupMessageReactionsUpdated;
 use App\Events\GroupMessageSent;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\GroupMessage\StoreGroupMessageRequest;
 use App\Http\Resources\GroupMessageResource;
 use App\Models\Group;
+use App\Models\GroupMessage;
 use App\Services\ImageService;
 use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class GroupMessageController extends Controller
 {
@@ -37,18 +41,30 @@ class GroupMessageController extends Controller
 
         $messages = $group->messages()
             ->where(fn ($query) => $query->whereNull('sender_id')->orWhereNotIn('sender_id', $hiddenUserIds))
-            ->with('sender')
+            ->with([
+                'sender',
+                'replyTo.sender',
+                // Reactions from blocked users are withheld like their messages.
+                'reactions' => fn ($query) => $query->whereNotIn('user_id', $hiddenUserIds),
+            ])
             ->latest()
             ->paginate(self::PER_PAGE)
             ->withQueryString();
         $messages->setCollection($messages->getCollection()->reverse()->values());
 
-        $messages->getCollection()->each(
-            fn ($message) => $message->setAttribute(
+        $messages->getCollection()->each(function ($message) use ($adminIds, $hiddenUserIds) {
+            $message->setAttribute(
                 'sender_is_admin',
                 $message->sender_id !== null && $adminIds->contains($message->sender_id),
-            ),
-        );
+            );
+
+            // A quoted message from someone the viewer has blocked (or been
+            // blocked by) is withheld, same as that person's own messages —
+            // the reply then shows the quote as unavailable.
+            if ($message->replyTo?->sender_id !== null && in_array($message->replyTo->sender_id, $hiddenUserIds, true)) {
+                $message->setRelation('replyTo', null);
+            }
+        });
 
         // Opening the chat is what "reads" it — same trigger as
         // MessageController::index() for the 1:1 swap-offer thread, just
@@ -77,18 +93,18 @@ class GroupMessageController extends Controller
     {
         $this->authorize('sendMessage', $group);
 
-        $imagePath = $request->hasFile('image')
-            ? $imageService->store($request->file('image'), "groups/{$group->id}/messages")
-            : null;
-
-        $message = $group->messages()->create([
+        $message = $group->messages()->make([
             'body' => $request->validated('body'),
-            'image_path' => $imagePath,
+            'reply_to_id' => $request->validated('reply_to_id'),
         ]);
+        $message->setImagePaths(array_map(
+            fn (UploadedFile $file) => $imageService->store($file, "groups/{$group->id}/messages"),
+            $request->uploadedImages(),
+        ));
         $message->sender_id = $request->user()->id;
         $message->save();
 
-        $message->load('sender');
+        $message->load(['sender', 'replyTo.sender', 'reactions']);
         $message->setAttribute(
             'sender_is_admin',
             $this->adminMemberIds($group)->contains($request->user()->id),
@@ -105,7 +121,7 @@ class GroupMessageController extends Controller
             $request->user(),
             NotificationType::GroupMessageReceived,
             "{$request->user()->name} in {$group->name}",
-            $message->body !== null ? Str::limit($message->body, 100) : '📷 Photo',
+            $message->body !== null ? Str::limit($message->body, 100) : $message->photoPreviewText(),
             ['group_id' => $group->id],
         );
 
@@ -120,5 +136,63 @@ class GroupMessageController extends Controller
         return $group->members()
             ->wherePivot('role', GroupMemberRole::Admin)
             ->pluck('users.id');
+    }
+
+    /**
+     * PUT /groups/{group}/messages/{groupMessage}/reaction — sets the
+     * caller's reaction, replacing any earlier one on the same message.
+     */
+    public function react(Request $request, Group $group, GroupMessage $groupMessage): JsonResponse
+    {
+        $this->authorizeReaction($request, $group, $groupMessage);
+        $data = $request->validate([
+            'emoji' => ['required', 'string', Rule::in(GroupMessage::REACTION_EMOJIS)],
+        ]);
+
+        $groupMessage->reactions()->updateOrCreate(
+            ['user_id' => $request->user()->id],
+            ['emoji' => $data['emoji']],
+        );
+
+        return $this->reactionsResponse($groupMessage);
+    }
+
+    /**
+     * DELETE /groups/{group}/messages/{groupMessage}/reaction — removes the
+     * caller's reaction, if any.
+     */
+    public function unreact(Request $request, Group $group, GroupMessage $groupMessage): JsonResponse
+    {
+        $this->authorizeReaction($request, $group, $groupMessage);
+
+        $groupMessage->reactions()->where('user_id', $request->user()->id)->delete();
+
+        return $this->reactionsResponse($groupMessage);
+    }
+
+    private function authorizeReaction(Request $request, Group $group, GroupMessage $groupMessage): void
+    {
+        $this->authorize('sendMessage', $group);
+        abort_unless((int) $groupMessage->group_id === $group->id, 404);
+        // A blocked user's messages are hidden from the caller, so they can't
+        // be reacted to either.
+        abort_if(
+            $groupMessage->sender_id !== null && in_array($groupMessage->sender_id, $request->user()->hiddenUserIds(), true),
+            404,
+        );
+    }
+
+    private function reactionsResponse(GroupMessage $groupMessage): JsonResponse
+    {
+        $groupMessage->load('reactions');
+
+        // toOthers(): the reacting client already has the new state from this
+        // response — see store() for the same reasoning.
+        broadcast(new GroupMessageReactionsUpdated($groupMessage))->toOthers();
+
+        return response()->json(['data' => [
+            'message_id' => $groupMessage->id,
+            'reactions' => $groupMessage->reactionSummary(),
+        ]]);
     }
 }

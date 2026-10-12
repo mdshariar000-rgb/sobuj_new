@@ -58,12 +58,11 @@ class EventsHeroHeader extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Agro Hub',
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w700,
-                          ),
+                      'Shobuj',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     Row(
                       children: [
@@ -78,12 +77,11 @@ class EventsHeroHeader extends StatelessWidget {
                         const SizedBox(width: 6),
                         Text(
                           'Community & Events',
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(
-                            color: AppColors.mint,
-                            fontWeight: FontWeight.w600,
-                          ),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: AppColors.mint,
+                                fontWeight: FontWeight.w600,
+                              ),
                         ),
                       ],
                     ),

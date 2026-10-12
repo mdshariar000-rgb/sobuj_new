@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\ListingStatus;
 use App\Enums\MessageType;
+use App\Enums\NotificationType;
 use App\Enums\SwapOfferStatus;
 use App\Events\MessageSent;
 use App\Events\SwapStatusUpdated;
@@ -14,10 +15,13 @@ use App\Http\Resources\SwapOfferResource;
 use App\Models\Listing;
 use App\Models\SwapOffer;
 use App\Models\User;
+use App\Services\NotificationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class SwapOfferController extends Controller
@@ -76,8 +80,11 @@ class SwapOfferController extends Controller
      * — mirroring how a messaging app reuses one conversation per contact rather than
      * starting a new one on every tap.
      */
-    public function store(StoreSwapOfferRequest $request, Listing $listing): JsonResponse
-    {
+    public function store(
+        StoreSwapOfferRequest $request,
+        Listing $listing,
+        NotificationService $notificationService,
+    ): JsonResponse {
         $user = $request->user();
 
         if ($listing->user_id === $user->id) {
@@ -122,6 +129,16 @@ class SwapOfferController extends Controller
 
         broadcast(new SwapStatusUpdated($swapOffer));
 
+        $note = $swapOffer->offer_details['note'] ?? null;
+        $notificationService->notify(
+            $listing->user,
+            $user,
+            NotificationType::SwapOfferReceived,
+            "{$user->name} made an offer on \"{$listing->title}\"",
+            is_string($note) && $note !== '' ? Str::limit($note, 100) : 'Tap to reply.',
+            ['swap_offer_id' => $swapOffer->id, 'listing_id' => $listing->id],
+        );
+
         return (new SwapOfferResource($swapOffer->fresh(['listing', 'listing.user', 'requester'])))
             ->response()
             ->setStatusCode(201);
@@ -130,15 +147,37 @@ class SwapOfferController extends Controller
     /**
      * Move the offer to a new status. Valid transitions and which side (listing owner
      * vs. requester) may make them are entirely defined by SwapOfferPolicy::respond().
+     *
+     * The listing follows the deal: accepting an offer reserves it (so it drops
+     * out of browsing and can't be accepted twice), cancelling that accepted
+     * offer puts it back on the market, and completing the deal marks it done
+     * and closes every other open offer on it. The other side is notified of
+     * each change.
      */
-    public function updateStatus(UpdateSwapOfferStatusRequest $request, SwapOffer $swapOffer): SwapOfferResource
-    {
+    public function updateStatus(
+        UpdateSwapOfferStatusRequest $request,
+        SwapOffer $swapOffer,
+        NotificationService $notificationService,
+    ): SwapOfferResource {
         $newStatus = SwapOfferStatus::from($request->validated('status'));
         $user = $request->user();
 
         $this->authorize('respond', [$swapOffer, $newStatus]);
 
-        DB::transaction(function () use ($swapOffer, $newStatus, $request, $user) {
+        $previousStatus = $swapOffer->status;
+
+        $closedOffers = DB::transaction(function () use ($swapOffer, $newStatus, $previousStatus, $request, $user) {
+            // Locked so two offers accepted at the same moment can't both
+            // reserve the listing.
+            $listing = Listing::query()->whereKey($swapOffer->listing_id)->lockForUpdate()->firstOrFail();
+            if ($newStatus === SwapOfferStatus::Accepted && $listing->status !== ListingStatus::Active) {
+                throw ValidationException::withMessages([
+                    'status' => [$listing->status === ListingStatus::Reserved
+                        ? 'This listing is already reserved for another offer.'
+                        : 'This listing is no longer available.'],
+                ]);
+            }
+
             $swapOffer->status = $newStatus;
 
             if ($newStatus === SwapOfferStatus::Countered && $request->filled('offer_details')) {
@@ -148,11 +187,118 @@ class SwapOfferController extends Controller
             $swapOffer->save();
 
             $this->postSystemMessage($swapOffer, $this->transitionMessage($newStatus, $user));
+
+            // Only the seller says how many went; a buyer marking it done counts as one.
+            $quantitySold = $user->id === $listing->user_id
+                ? (int) ($request->validated('quantity_sold') ?? 1)
+                : 1;
+
+            return $this->syncListingStatus($listing, $swapOffer, $previousStatus, $quantitySold);
         });
 
         broadcast(new SwapStatusUpdated($swapOffer));
 
+        $listing = $swapOffer->listing;
+        $isOwner = $user->id === $listing->user_id;
+        $otherParty = $isOwner ? $swapOffer->requester : $listing->user;
+        $notificationService->notify(
+            $otherParty,
+            $user,
+            NotificationType::SwapOfferUpdated,
+            $this->transitionMessage($newStatus, $user),
+            $newStatus === SwapOfferStatus::Completed && $isOwner
+                ? "How did it go? Leave a review for \"{$listing->title}\"."
+                : "\"{$listing->title}\"",
+            ['swap_offer_id' => $swapOffer->id, 'listing_id' => $listing->id],
+        );
+
+        foreach ($closedOffers as $closed) {
+            broadcast(new SwapStatusUpdated($closed));
+            $notificationService->notify(
+                $closed->requester,
+                $listing->user,
+                NotificationType::SwapOfferUpdated,
+                "\"{$listing->title}\" is no longer available",
+                'The seller completed a deal with someone else.',
+                ['swap_offer_id' => $closed->id, 'listing_id' => $listing->id],
+            );
+        }
+
         return new SwapOfferResource($swapOffer->fresh(['listing', 'listing.user', 'requester']));
+    }
+
+    /**
+     * Keeps the listing's status in step with $swapOffer's new status. Returns
+     * the other offers it had to close because the listing is gone.
+     *
+     * @return Collection<int, SwapOffer>
+     */
+    private function syncListingStatus(
+        Listing $listing,
+        SwapOffer $swapOffer,
+        SwapOfferStatus $previousStatus,
+        int $quantitySold = 1,
+    ): Collection {
+        // A listing with more than one unit stays on the market while deals on
+        // it are in progress — several buyers can each take some.
+        $hasSeveralUnits = $listing->quantity !== null && $listing->quantity > 1;
+
+        switch ($swapOffer->status) {
+            case SwapOfferStatus::Accepted:
+                if (! $hasSeveralUnits) {
+                    $listing->update(['status' => ListingStatus::Reserved]);
+                }
+
+                return collect();
+
+            case SwapOfferStatus::Canceled:
+                $wasHoldingListing = $previousStatus === SwapOfferStatus::Accepted
+                    && $listing->status === ListingStatus::Reserved
+                    && ! $listing->swapOffers()->where('status', SwapOfferStatus::Accepted)->exists();
+                if ($wasHoldingListing) {
+                    $listing->update(['status' => ListingStatus::Active]);
+                }
+
+                return collect();
+
+            case SwapOfferStatus::Completed:
+                if ($listing->quantity !== null) {
+                    $remaining = max(0, $listing->quantity - $quantitySold);
+
+                    if ($remaining > 0) {
+                        $listing->update([
+                            'quantity' => $remaining,
+                            'status' => ListingStatus::Active,
+                        ]);
+                        $this->postSystemMessage(
+                            $swapOffer,
+                            "{$quantitySold} sold — {$remaining} still available.",
+                        );
+
+                        return collect();
+                    }
+
+                    $listing->quantity = 0;
+                }
+
+                $listing->status = ListingStatus::Completed;
+                $listing->save();
+
+                $others = $listing->swapOffers()
+                    ->whereKeyNot($swapOffer->id)
+                    ->whereIn('status', [SwapOfferStatus::Pending, SwapOfferStatus::Countered, SwapOfferStatus::Accepted])
+                    ->with('requester')
+                    ->get();
+                foreach ($others as $other) {
+                    $other->update(['status' => SwapOfferStatus::Declined]);
+                    $this->postSystemMessage($other, "\"{$listing->title}\" is no longer available.");
+                }
+
+                return $others;
+
+            default:
+                return collect();
+        }
     }
 
     /**
@@ -179,7 +325,7 @@ class SwapOfferController extends Controller
             SwapOfferStatus::Countered => "{$actor->name} sent a counter-offer.",
             SwapOfferStatus::Declined => "{$actor->name} declined the offer.",
             SwapOfferStatus::Canceled => "{$actor->name} canceled the offer.",
-            SwapOfferStatus::Completed => "{$actor->name} marked the swap as completed.",
+            SwapOfferStatus::Completed => "{$actor->name} marked the deal as done.",
             SwapOfferStatus::Pending => "{$actor->name} reset the offer to pending.",
         };
     }

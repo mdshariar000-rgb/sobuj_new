@@ -1,5 +1,6 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import '../../../widgets/image_decode.dart';
 
 /// Shared thumbnail rendering for both the list card and the map preview
 /// card — a placeholder icon when a listing has no photos, rather than an
@@ -43,6 +44,7 @@ class ListingThumbnail extends StatelessWidget {
         imageUrl: url!,
         width: size,
         height: height,
+        memCacheWidth: decodeWidthFor(context, size, height),
         fit: BoxFit.cover,
         placeholder: (context, _) => Container(
           width: size,

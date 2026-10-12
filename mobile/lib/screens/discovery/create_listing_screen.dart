@@ -1,29 +1,43 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../models/enums.dart';
+import '../../models/listing.dart';
+import '../../models/listing_photo.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/discovery_providers.dart';
-import '../../providers/location_providers.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
+import 'favorites_screen.dart';
+import 'listing_posted_screen.dart';
+import 'messages_screen.dart';
+import 'widgets/category_chips.dart';
+import 'widgets/marketplace_hero_header.dart';
 
-/// The real screen behind the Marketplace banner's "Sell, Buy or Trade"
-/// button — posts to the same StoreListingRequest endpoint this app's
-/// original marketplace build already had ready, just never had a mobile
-/// UI in front of it.
+/// Which marketplace form to show: "Sell an Item" (price, quantity,
+/// contact) or "Swap an Item" (what you'd like in exchange).
+enum ListingFormMode { sell, swap }
+
+/// The Sell / Swap posting form behind the Marketplace's Sell and Swap
+/// buttons. Posts to StoreListingRequest; the listing is placed at the
+/// account's registered location (ListingController::resolveLocation).
 ///
-/// Sectioned to match the shared reference design (Listing Intent / Photos /
-/// Category / Pricing & Exchange Terms / Trade Preference / Specimen
-/// Condition / Detailed Description / Location & Handover), but every field
-/// on screen maps to a real column StoreListingRequest actually accepts —
-/// there's no "AI Refine" button or fixed shipping/fee options here, since
-/// no such feature exists on the backend.
+/// With [editing] set it's the seller's "Edit item" form instead: filled in
+/// from that listing, and saving sends only the changes (UpdateListingRequest)
+/// and pops back with the updated listing.
 class CreateListingScreen extends ConsumerStatefulWidget {
-  const CreateListingScreen({super.key});
+  const CreateListingScreen({
+    super.key,
+    this.mode = ListingFormMode.sell,
+    this.editing,
+  });
+
+  final ListingFormMode mode;
+  final Listing? editing;
 
   @override
   ConsumerState<CreateListingScreen> createState() =>
@@ -33,101 +47,142 @@ class CreateListingScreen extends ConsumerStatefulWidget {
 class _CreateListingScreenState extends ConsumerState<CreateListingScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
-  final _varietyController = TextEditingController();
-  final _priceController = TextEditingController();
-  final _lookingForController = TextEditingController();
   final _descriptionController = TextEditingController();
-  final _handoverController = TextEditingController();
+  final _priceController = TextEditingController();
+  final _quantityController = TextEditingController();
+  final _contactController = TextEditingController();
+  final _swapForController = TextEditingController();
 
-  String? _listingType;
-  TransactionType _transactionType = TransactionType.swap;
-  ListingCondition? _condition;
-  bool _openToBartering = false;
-  final List<File> _photos = [];
+  String? _category;
+
+  /// Photos already on the listing (when editing) followed by new picks.
+  final List<_FormPhoto> _photos = [];
+  final List<int> _removedPhotoIds = [];
+  bool _photosMissing = false;
   bool _isSubmitting = false;
   String? _errorMessage;
 
-  static const _descriptionMaxLength = 2000;
+  static const maxPhotos = 5;
+  static const descriptionMaxLength = 500;
+
+  bool get _isEditing => widget.editing != null;
+
+  bool get _isSell => _isEditing
+      ? widget.editing!.transactionType != TransactionType.swap
+      : widget.mode == ListingFormMode.sell;
 
   @override
   void initState() {
     super.initState();
-    _descriptionController.addListener(() => setState(() {}));
+    final listing = widget.editing;
+    if (listing == null) return;
+    _titleController.text = listing.title;
+    _descriptionController.text = listing.description ?? '';
+    _category = listing.listingType;
+    if (listing.price != null) {
+      _priceController.text = listing.price!.toStringAsFixed(2);
+    }
+    if (listing.quantity != null) {
+      _quantityController.text = '${listing.quantity}';
+    }
+    _contactController.text = listing.contact ?? '';
+    _swapForController.text = listing.lookingFor ?? '';
+    _photos.addAll(listing.photos.map(_FormPhoto.remote));
+  }
+
+  void _removePhoto(int index) {
+    setState(() {
+      final removed = _photos.removeAt(index);
+      if (removed.remote != null) _removedPhotoIds.add(removed.remote!.id);
+    });
   }
 
   @override
   void dispose() {
     _titleController.dispose();
-    _varietyController.dispose();
-    _priceController.dispose();
-    _lookingForController.dispose();
     _descriptionController.dispose();
-    _handoverController.dispose();
+    _priceController.dispose();
+    _quantityController.dispose();
+    _contactController.dispose();
+    _swapForController.dispose();
     super.dispose();
   }
 
-  Future<void> _pickPhoto() async {
-    if (_photos.length >= 6) return;
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
+  Future<void> _pickPhotos() async {
+    final remaining = maxPhotos - _photos.length;
+    if (remaining <= 0) return;
+    final picked = await ImagePicker().pickMultiImage(
       maxWidth: 1600,
       imageQuality: 85,
+      limit: remaining > 1 ? remaining : null,
     );
-    if (picked != null) setState(() => _photos.add(File(picked.path)));
+    if (picked.isEmpty || !mounted) return;
+    setState(() {
+      _photos.addAll(
+        picked.take(remaining).map((file) => _FormPhoto.local(File(file.path))),
+      );
+      _photosMissing = false;
+    });
   }
 
-  /// The effective transaction type sent to the server — "Open to
-  /// counter-offers and bartering" on a For Sale listing is just an honest
-  /// UI label over the existing `swap_or_cash` value, not a new field.
-  TransactionType get _effectiveTransactionType {
-    if (_transactionType == TransactionType.sell && _openToBartering) {
-      return TransactionType.swapOrCash;
-    }
-    return _transactionType;
+  void _stepQuantity(int delta) {
+    final current = int.tryParse(_quantityController.text.trim()) ?? 0;
+    final next = (current + delta).clamp(1, 100000);
+    setState(() => _quantityController.text = '$next');
   }
+
+  String? _required(String? value, String message) =>
+      (value == null || value.trim().isEmpty) ? message : null;
 
   Future<void> _submit() async {
-    if (!(_formKey.currentState?.validate() ?? false)) return;
+    final formValid = _formKey.currentState?.validate() ?? false;
+    setState(() => _photosMissing = _photos.isEmpty);
+    if (!formValid || _photos.isEmpty) return;
 
     setState(() {
       _isSubmitting = true;
       _errorMessage = null;
     });
 
+    if (_isEditing) {
+      await _saveEdits();
+      return;
+    }
+
     try {
-      final position = await ref.read(deviceLocationProvider.future);
-      await ref
+      final listing = await ref
           .read(apiClientProvider)
           .createListing(
             title: _titleController.text.trim(),
-            variety: _varietyController.text.trim().isEmpty
-                ? null
-                : _varietyController.text.trim(),
-            description: _descriptionController.text.trim().isEmpty
-                ? null
-                : _descriptionController.text.trim(),
-            condition: _transactionType.isRequest ? null : _condition,
-            listingType: _listingType!,
-            transactionType: _effectiveTransactionType,
-            price: _priceController.text.trim().isEmpty
-                ? null
-                : double.tryParse(_priceController.text.trim()),
-            lookingFor: _lookingForController.text.trim().isEmpty
-                ? null
-                : _lookingForController.text.trim(),
-            handoverNote: _handoverController.text.trim().isEmpty
-                ? null
-                : _handoverController.text.trim(),
-            latitude: position.latitude,
-            longitude: position.longitude,
-            photos: _transactionType.isRequest ? const [] : _photos,
+            description: _descriptionController.text.trim(),
+            listingType: _category!,
+            transactionType: _isSell
+                ? TransactionType.sell
+                : TransactionType.swap,
+            price: _isSell
+                ? double.tryParse(_priceController.text.trim())
+                : null,
+            quantity: _isSell
+                ? int.tryParse(_quantityController.text.trim())
+                : null,
+            contact: _isSell ? _contactController.text.trim() : null,
+            lookingFor: _isSell ? null : _swapForController.text.trim(),
+            photos: [for (final photo in _photos) ?photo.file],
           );
 
-      // The Marketplace list won't show this until it refetches — nudge it
-      // now so posting feels immediate rather than needing a pull-to-refresh.
+      // Lists that show this listing won't until they refetch — nudge them
+      // now so posting feels immediate.
       ref.invalidate(nearbyListingsProvider);
+      ref.invalidate(myListingsProvider);
 
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) =>
+                ListingPostedScreen(listing: listing, mode: widget.mode),
+          ),
+        );
+      }
     } on ApiException catch (e) {
       setState(() => _errorMessage = e.message);
     } finally {
@@ -135,636 +190,478 @@ class _CreateListingScreenState extends ConsumerState<CreateListingScreen> {
     }
   }
 
-  /// A dropdown over the real, admin-managed category list (see
-  /// ListingCategoryResource/ListingCategoryController on the backend) —
-  /// marketplace categories are curated from the admin panel, not typed
-  /// freely here.
+  Future<void> _saveEdits() async {
+    setState(() {
+      _isSubmitting = true;
+      _errorMessage = null;
+    });
+    try {
+      final updated = await ref
+          .read(apiClientProvider)
+          .updateListing(
+            widget.editing!.id,
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim(),
+            listingType: _category,
+            price: _isSell
+                ? double.tryParse(_priceController.text.trim())
+                : null,
+            quantity: _isSell
+                ? int.tryParse(_quantityController.text.trim())
+                : null,
+            contact: _isSell ? _contactController.text.trim() : null,
+            lookingFor: _isSell ? null : _swapForController.text.trim(),
+            newPhotos: [for (final photo in _photos) ?photo.file],
+            removePhotoIds: _removedPhotoIds,
+          );
+      ref.invalidate(nearbyListingsProvider);
+      ref.invalidate(myListingsProvider);
+      if (mounted) Navigator.of(context).pop(updated);
+    } on ApiException catch (e) {
+      setState(() => _errorMessage = e.message);
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final openOfferCount =
+        ref
+            .watch(mySwapOffersProvider)
+            .valueOrNull
+            ?.where((offer) => offer.status.isOpen)
+            .length ??
+        0;
+
+    return Scaffold(
+      backgroundColor: AppColors.surface,
+      body: Column(
+        children: [
+          MarketplaceHeroHeader(
+            openOfferCount: openOfferCount,
+            onBack: () => Navigator.of(context).maybePop(),
+            onMessagesTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const MessagesScreen())),
+            onFavoritesTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const FavoritesScreen())),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceContainer,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        _isEditing
+                            ? 'Edit Item'
+                            : (_isSell ? 'Sell an Item' : 'Swap an Item'),
+                        style: Theme.of(context).textTheme.headlineSmall
+                            ?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.textDark,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _isEditing
+                            ? 'Change anything below, then save.'
+                            : 'Add details about your item to let others know.',
+                        style: const TextStyle(color: AppColors.textMuted),
+                      ),
+                      if (_errorMessage != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          _errorMessage!,
+                          style: const TextStyle(color: AppColors.error),
+                        ),
+                      ],
+
+                      const _FieldLabel(number: 1, label: 'Title of item'),
+                      TextFormField(
+                        key: const Key('listing-title-field'),
+                        controller: _titleController,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: _inputDecoration(
+                          _isSell
+                              ? 'e.g. Tomato Seeds, Garden Compost, Hand Trowel'
+                              : 'e.g. Tomato Seeds, Garden Tools, Plant Cuttings',
+                        ),
+                        validator: (value) =>
+                            _required(value, 'Enter a title.'),
+                      ),
+
+                      const _FieldLabel(number: 2, label: 'Images'),
+                      _PhotoPicker(
+                        photos: _photos,
+                        max: maxPhotos,
+                        showError: _photosMissing,
+                        onAdd: _pickPhotos,
+                        onRemove: _removePhoto,
+                      ),
+
+                      const _FieldLabel(
+                        number: 3,
+                        label: 'Description of the item',
+                      ),
+                      TextFormField(
+                        key: const Key('listing-description-field'),
+                        controller: _descriptionController,
+                        maxLines: 4,
+                        minLines: 3,
+                        maxLength: descriptionMaxLength,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: _inputDecoration(
+                          'Describe your item, its condition, variety, size, etc.',
+                        ),
+                        validator: (value) =>
+                            _required(value, 'Add a short description.'),
+                      ),
+
+                      const _FieldLabel(number: 4, label: 'Category'),
+                      _buildCategoryField(),
+
+                      if (_isSell) ...[
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  const _FieldLabel(
+                                    number: 5,
+                                    label: 'Price per unit (£)',
+                                  ),
+                                  TextFormField(
+                                    key: const Key('listing-price-field'),
+                                    controller: _priceController,
+                                    keyboardType:
+                                        const TextInputType.numberWithOptions(
+                                          decimal: true,
+                                        ),
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.allow(
+                                        RegExp(r'^\d*\.?\d{0,2}'),
+                                      ),
+                                    ],
+                                    decoration: _inputDecoration('e.g. 2.50')
+                                        .copyWith(
+                                          prefixIcon: const SizedBox(
+                                            width: 40,
+                                            child: Center(
+                                              child: Text(
+                                                '£',
+                                                style: TextStyle(fontSize: 16),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    validator: (value) {
+                                      final price = double.tryParse(
+                                        value?.trim() ?? '',
+                                      );
+                                      if (price == null) {
+                                        return 'Enter a price.';
+                                      }
+                                      if (price > 99999.99) return 'Too high.';
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  const _FieldLabel(
+                                    number: 6,
+                                    label: 'Quantity',
+                                  ),
+                                  TextFormField(
+                                    key: const Key('listing-quantity-field'),
+                                    controller: _quantityController,
+                                    keyboardType: TextInputType.number,
+                                    inputFormatters: [
+                                      FilteringTextInputFormatter.digitsOnly,
+                                    ],
+                                    decoration: _inputDecoration('e.g. 10')
+                                        .copyWith(
+                                          suffixIcon: _QuantityStepper(
+                                            onUp: () => _stepQuantity(1),
+                                            onDown: () => _stepQuantity(-1),
+                                          ),
+                                        ),
+                                    validator: (value) {
+                                      final quantity = int.tryParse(
+                                        value?.trim() ?? '',
+                                      );
+                                      if (quantity == null || quantity < 1) {
+                                        return 'Enter a quantity.';
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const _FieldLabel(number: 7, label: 'Contact Seller'),
+                        TextFormField(
+                          key: const Key('listing-contact-field'),
+                          controller: _contactController,
+                          keyboardType: TextInputType.emailAddress,
+                          decoration: _inputDecoration('Phone number or email')
+                              .copyWith(
+                                prefixIcon: const Icon(
+                                  Icons.phone_outlined,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                          validator: (value) {
+                            final contact = value?.trim() ?? '';
+                            if (contact.isEmpty) {
+                              return 'Enter a phone number or email.';
+                            }
+                            final isEmail = RegExp(
+                              r'^[^@\s]+@[^@\s]+\.[^@\s]+$',
+                            ).hasMatch(contact);
+                            final digits = contact.replaceAll(
+                              RegExp(r'\D'),
+                              '',
+                            );
+                            final isPhone =
+                                RegExp(r'^[\d\s()+-]+$').hasMatch(contact) &&
+                                digits.length >= 7;
+                            return isEmail || isPhone
+                                ? null
+                                : 'Enter a valid phone number or email.';
+                          },
+                        ),
+                      ] else ...[
+                        const _FieldLabel(number: 5, label: 'Swap'),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppColors.mintLight,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Row(
+                            children: [
+                              Icon(
+                                Icons.sync,
+                                size: 30,
+                                color: AppColors.forestDark,
+                              ),
+                              SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Swap',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textDark,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Exchange with another item',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: AppColors.textMuted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const _FieldLabel(
+                          number: 6,
+                          label: 'What would you like to swap for?',
+                        ),
+                        TextFormField(
+                          key: const Key('listing-swap-for-field'),
+                          controller: _swapForController,
+                          textCapitalization: TextCapitalization.sentences,
+                          decoration: _inputDecoration(
+                            'e.g. Chilli seeds, Herb plants, Garden tools',
+                          ),
+                          validator: (value) => _required(
+                            value,
+                            'Say what you would like in exchange.',
+                          ),
+                        ),
+                      ],
+
+                      const SizedBox(height: 24),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: _isSubmitting
+                                  ? null
+                                  : () => Navigator.of(context).maybePop(),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.buttonMuted,
+                                foregroundColor: AppColors.textDark,
+                                minimumSize: const Size.fromHeight(50),
+                              ),
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: FilledButton(
+                              key: const Key('create-listing-submit'),
+                              onPressed: _isSubmitting ? null : _submit,
+                              style: FilledButton.styleFrom(
+                                minimumSize: const Size.fromHeight(50),
+                              ),
+                              child: _isSubmitting
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : Text(
+                                      _isEditing ? 'Save Changes' : 'Post Item',
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// A dropdown over the admin-managed category list (see
+  /// ListingCategoryController on the backend), each with its icon.
   Widget _buildCategoryField() {
     final categoriesAsync = ref.watch(listingCategoriesProvider);
 
     return categoriesAsync.when(
-      loading: () => const InputDecorator(
-        decoration: InputDecoration(labelText: 'Category *', enabled: false),
-        child: Text(
+      loading: () => InputDecorator(
+        decoration: _inputDecoration(null),
+        child: const Text(
           'Loading categories…',
           style: TextStyle(color: AppColors.textMuted),
         ),
       ),
-      error: (error, _) => const InputDecorator(
-        decoration: InputDecoration(labelText: 'Category *', enabled: false),
-        child: Text(
+      error: (error, _) => InputDecorator(
+        decoration: _inputDecoration(null),
+        child: const Text(
           'Could not load categories',
           style: TextStyle(color: AppColors.textMuted),
         ),
       ),
       data: (categories) => DropdownButtonFormField<String>(
         key: const Key('create-listing-category-field'),
-        initialValue: _listingType,
-        decoration: const InputDecoration(labelText: 'Category *'),
+        initialValue: _category,
+        isExpanded: true,
+        hint: const Text('Select a category'),
+        decoration: _inputDecoration(null),
+        icon: const Icon(Icons.keyboard_arrow_down),
         items: categories
             .map(
               (category) => DropdownMenuItem(
                 value: category.name,
-                child: Text(category.name),
+                child: Row(
+                  children: [
+                    Icon(
+                      categoryIcon(category.name),
+                      size: 20,
+                      color: AppColors.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        category.name,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             )
             .toList(),
         validator: (value) => value == null ? 'Select a category.' : null,
-        onChanged: (value) => setState(() => _listingType = value),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isRequest = _transactionType.isRequest;
-
-    return Scaffold(
-      backgroundColor: AppColors.surface,
-      appBar: AppBar(title: const Text('Post a Listing')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (_errorMessage != null) ...[
-                  Text(
-                    _errorMessage!,
-                    style: const TextStyle(color: AppColors.error),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // --- Listing Intent ---
-                _SectionCard(
-                  icon: Icons.grass_outlined,
-                  title: 'Listing Intent',
-                  subtitle: 'What are you looking to do?',
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: TransactionType.values.map((type) {
-                      return ChoiceChip(
-                        label: Text(type.label),
-                        selected: _transactionType == type,
-                        onSelected: (_) => setState(() {
-                          _transactionType = type;
-                          _openToBartering = false;
-                        }),
-                      );
-                    }).toList(),
-                  ),
-                ),
-
-                if (!isRequest) ...[
-                  const SizedBox(height: 16),
-                  _SectionCard(
-                    icon: Icons.photo_camera_outlined,
-                    title: 'Photos & Specimen Proof',
-                    subtitle: 'Add clear, well-lit images (up to 6).',
-                    trailing: _UploadCountBadge(count: _photos.length, max: 6),
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (var i = 0; i < _photos.length; i++)
-                          _PhotoThumbnail(
-                            photo: _photos[i],
-                            isPrimary: i == 0,
-                            onRemove: () => setState(() => _photos.removeAt(i)),
-                          ),
-                        if (_photos.length < 6)
-                          _AddPhotoTile(onTap: _pickPhoto),
-                      ],
-                    ),
-                  ),
-                ],
-
-                const SizedBox(height: 16),
-                _SectionCard(
-                  icon: Icons.label_outline,
-                  title: isRequest
-                      ? 'What You\'re Looking For'
-                      : 'Title & Category',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextFormField(
-                        key: const Key('create-listing-title-field'),
-                        controller: _titleController,
-                        decoration: InputDecoration(
-                          labelText: isRequest
-                              ? 'What are you looking for? *'
-                              : 'Listing Title *',
-                          hintText: isRequest
-                              ? 'e.g. Heavy Duty Broadfork'
-                              : 'e.g. Meyer Lemon Rootstock',
-                        ),
-                        validator: (value) =>
-                            (value == null || value.trim().isEmpty)
-                            ? 'Enter a title.'
-                            : null,
-                      ),
-                      if (!isRequest) ...[
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _varietyController,
-                          decoration: const InputDecoration(
-                            labelText: 'Variety (optional)',
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 14),
-                      _buildCategoryField(),
-                    ],
-                  ),
-                ),
-
-                // --- Pricing & Exchange Terms ---
-                const SizedBox(height: 16),
-                _SectionCard(
-                  icon: Icons.sell_outlined,
-                  title: isRequest ? 'Budget' : 'Pricing & Exchange Terms',
-                  child: isRequest
-                      ? TextFormField(
-                          controller: _priceController,
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Budget (optional)',
-                            hintText: 'Max you\'d pay',
-                          ),
-                        )
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: BoxDecoration(
-                                color: AppColors.surfaceMuted,
-                                borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: AppColors.border),
-                              ),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: _SegmentButton(
-                                      label: 'Set Price / Value',
-                                      selected:
-                                          _transactionType ==
-                                              TransactionType.sell ||
-                                          _transactionType ==
-                                              TransactionType.swapOrCash,
-                                      onTap: () => setState(
-                                        () => _transactionType =
-                                            TransactionType.sell,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: _SegmentButton(
-                                      label: 'Free / Gift',
-                                      selected:
-                                          _transactionType ==
-                                          TransactionType.free,
-                                      onTap: () => setState(
-                                        () => _transactionType =
-                                            TransactionType.free,
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: _SegmentButton(
-                                      label: 'Trade Only',
-                                      selected:
-                                          _transactionType ==
-                                          TransactionType.swap,
-                                      onTap: () => setState(
-                                        () => _transactionType =
-                                            TransactionType.swap,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            if (_transactionType == TransactionType.sell ||
-                                _transactionType ==
-                                    TransactionType.swapOrCash) ...[
-                              const SizedBox(height: 14),
-                              TextFormField(
-                                key: const Key('create-listing-price-field'),
-                                controller: _priceController,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                      decimal: true,
-                                    ),
-                                decoration: const InputDecoration(
-                                  labelText: 'Estimated Value / Price *',
-                                ),
-                                validator: (value) =>
-                                    (value == null || value.trim().isEmpty)
-                                    ? 'Enter a price.'
-                                    : null,
-                              ),
-                              CheckboxListTile(
-                                value: _openToBartering,
-                                onChanged: (value) => setState(
-                                  () => _openToBartering = value ?? false,
-                                ),
-                                contentPadding: EdgeInsets.zero,
-                                controlAffinity:
-                                    ListTileControlAffinity.leading,
-                                title: const Text(
-                                  'Open to counter-offers and bartering',
-                                  style: TextStyle(fontSize: 14),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                ),
-
-                // --- Trade Preference ---
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceMuted,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.primary),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.swap_horiz,
-                            size: 18,
-                            color: AppColors.primary,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              isRequest
-                                  ? 'Any Other Details'
-                                  : 'Trade Preference (Willing to Accept)',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                color: AppColors.forestDark,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: _lookingForController,
-                        maxLines: 3,
-                        decoration: InputDecoration(
-                          filled: true,
-                          fillColor: AppColors.surfaceContainer,
-                          hintText: isRequest
-                              ? 'Any other details buyers should know.'
-                              : 'e.g. Heirloom scions, organic compost, or '
-                                    'elderberry cuttings',
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        isRequest
-                            ? 'Optional — helps the right grower reach out.'
-                            : 'Specify items to unlock matches with '
-                                  'neighboring gardeners.',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // --- Specimen Condition ---
-                if (!isRequest) ...[
-                  const SizedBox(height: 16),
-                  _SectionCard(
-                    icon: Icons.eco_outlined,
-                    title: 'Specimen Condition',
-                    subtitle: 'Select the most accurate health status.',
-                    child: Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: ListingCondition.values.map((condition) {
-                        return ChoiceChip(
-                          label: Text(condition.label),
-                          selected: _condition == condition,
-                          onSelected: (selected) => setState(
-                            () => _condition = selected ? condition : null,
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                ],
-
-                // --- Detailed Description ---
-                const SizedBox(height: 16),
-                _SectionCard(
-                  icon: Icons.description_outlined,
-                  title: 'Detailed Description',
-                  child: TextFormField(
-                    controller: _descriptionController,
-                    maxLines: 5,
-                    maxLength: _descriptionMaxLength,
-                    decoration: const InputDecoration(
-                      hintText:
-                          'Share care history, size, growing conditions — '
-                          'anything a buyer or trader would want to know.',
-                      alignLabelWithHint: true,
-                    ),
-                  ),
-                ),
-
-                // --- Location & Handover ---
-                const SizedBox(height: 16),
-                _SectionCard(
-                  icon: Icons.place_outlined,
-                  title: 'Location & Handover',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        'Your current location will be used as the pickup '
-                        'area (shown to others as an approximate radius).',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        controller: _handoverController,
-                        maxLines: 2,
-                        decoration: const InputDecoration(
-                          labelText: 'Handover notes (optional)',
-                          hintText:
-                              'e.g. Weekday evening pickup, or can meet '
-                              'nearby',
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: AppColors.surfaceMuted,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.shield_outlined,
-                        size: 18,
-                        color: AppColors.textMuted,
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          'Meet in a public place when possible, and '
-                          'inspect any plant material for pests or disease '
-                          'before you accept it.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textMuted,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: _isSubmitting ? null : _submit,
-                  icon: _isSubmitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.eco, size: 18),
-                  label: Text(isRequest ? 'Post Request' : 'Publish Listing'),
-                ),
-              ],
-            ),
-          ),
-        ),
+        onChanged: (value) => setState(() => _category = value),
       ),
     );
   }
 }
 
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.icon,
-    required this.title,
-    this.subtitle,
-    this.trailing,
-    required this.child,
-  });
-
-  final IconData icon;
-  final String title;
-  final String? subtitle;
-  final Widget? trailing;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainer,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon, size: 18, color: AppColors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                    ),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle!,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              ?trailing,
-            ],
-          ),
-          const SizedBox(height: 12),
-          child,
-        ],
-      ),
-    );
-  }
+InputDecoration _inputDecoration(String? hint) {
+  OutlineInputBorder border(Color color) => OutlineInputBorder(
+    borderRadius: BorderRadius.circular(8),
+    borderSide: BorderSide(color: color),
+  );
+  return InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(color: AppColors.textMuted, fontSize: 14),
+    filled: true,
+    fillColor: AppColors.surfaceContainer,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    border: border(AppColors.border),
+    enabledBorder: border(AppColors.border),
+    focusedBorder: border(AppColors.primary),
+    errorBorder: border(AppColors.error),
+    focusedErrorBorder: border(AppColors.error),
+  );
 }
 
-class _UploadCountBadge extends StatelessWidget {
-  const _UploadCountBadge({required this.count, required this.max});
+/// "1. Title of item *" — the numbered field headings from the design.
+class _FieldLabel extends StatelessWidget {
+  const _FieldLabel({required this.number, required this.label});
 
-  final int count;
-  final int max;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.mint,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        '$count / $max uploaded',
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w700,
-          color: AppColors.forestDark,
-        ),
-      ),
-    );
-  }
-}
-
-class _PhotoThumbnail extends StatelessWidget {
-  const _PhotoThumbnail({
-    required this.photo,
-    required this.isPrimary,
-    required this.onRemove,
-  });
-
-  final File photo;
-  final bool isPrimary;
-  final VoidCallback onRemove;
+  final int number;
+  final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: Image.file(photo, width: 100, height: 100, fit: BoxFit.cover),
-        ),
-        if (isPrimary)
-          Positioned(
-            left: 6,
-            bottom: 6,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppColors.forestDark,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'Primary',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.mint,
-                ),
-              ),
-            ),
+    return Padding(
+      padding: const EdgeInsets.only(top: 18, bottom: 8),
+      child: Text.rich(
+        TextSpan(
+          text: '$number. $label ',
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            fontSize: 15,
+            color: AppColors.textDark,
           ),
-        Positioned(
-          right: 4,
-          top: 4,
-          child: IconButton(
-            icon: const CircleAvatar(
-              radius: 12,
-              backgroundColor: AppColors.forestDark,
-              child: Icon(Icons.close, size: 14, color: Colors.white),
-            ),
-            onPressed: onRemove,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _AddPhotoTile extends StatelessWidget {
-  const _AddPhotoTile({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 100,
-        height: 100,
-        decoration: BoxDecoration(
-          color: AppColors.surfaceMuted,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.border, width: 2),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 32,
-              height: 32,
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(
-                color: AppColors.buttonMuted,
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.add_a_photo_outlined,
-                size: 16,
-                color: AppColors.primary,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Add Photo',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
+          children: const [
+            TextSpan(
+              text: '*',
+              style: TextStyle(color: AppColors.error),
             ),
           ],
         ),
@@ -773,38 +670,180 @@ class _AddPhotoTile extends StatelessWidget {
   }
 }
 
-class _SegmentButton extends StatelessWidget {
-  const _SegmentButton({
-    required this.label,
-    required this.selected,
-    required this.onTap,
+/// A dashed-looking box with "Add Photos" and a row of five slots — picked
+/// photos fill the slots left to right, each with a remove button.
+class _PhotoPicker extends StatelessWidget {
+  const _PhotoPicker({
+    required this.photos,
+    required this.max,
+    required this.showError,
+    required this.onAdd,
+    required this.onRemove,
   });
 
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+  final List<_FormPhoto> photos;
+  final int max;
+  final bool showError;
+  final VoidCallback onAdd;
+  final ValueChanged<int> onRemove;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? AppColors.surfaceContainer : null,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: selected ? AppColors.forestDark : AppColors.textMuted,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          key: const Key('listing-add-photos'),
+          onTap: photos.length < max ? onAdd : null,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(12, 16, 12, 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: showError ? AppColors.error : AppColors.border,
+              ),
+            ),
+            child: Column(
+              children: [
+                const Icon(
+                  Icons.photo_camera,
+                  size: 34,
+                  color: AppColors.primary,
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Add Photos',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textDark,
+                  ),
+                ),
+                Text(
+                  'Tap to add up to $max photos',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    for (var i = 0; i < max; i++) ...[
+                      if (i > 0) const SizedBox(width: 8),
+                      Expanded(
+                        child: AspectRatio(
+                          aspectRatio: 1.1,
+                          child: i < photos.length
+                              ? Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    ClipRRect(
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: photos[i].file != null
+                                          ? Image.file(
+                                              photos[i].file!,
+                                              fit: BoxFit.cover,
+                                            )
+                                          : Image.network(
+                                              photos[i].remote!.url,
+                                              fit: BoxFit.cover,
+                                              errorBuilder: (_, _, _) =>
+                                                  const ColoredBox(
+                                                    color:
+                                                        AppColors.buttonMuted,
+                                                    child: Icon(
+                                                      Icons
+                                                          .broken_image_outlined,
+                                                      color:
+                                                          AppColors.textMuted,
+                                                    ),
+                                                  ),
+                                            ),
+                                    ),
+                                    Positioned(
+                                      right: 2,
+                                      top: 2,
+                                      child: GestureDetector(
+                                        onTap: () => onRemove(i),
+                                        child: const CircleAvatar(
+                                          radius: 10,
+                                          backgroundColor: Colors.black54,
+                                          child: Icon(
+                                            Icons.close,
+                                            size: 13,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                )
+                              : Container(
+                                  decoration: BoxDecoration(
+                                    color: AppColors.buttonMuted,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Icon(
+                                    Icons.add,
+                                    color: AppColors.textMuted,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
+        if (showError)
+          const Padding(
+            padding: EdgeInsets.only(left: 12, top: 6),
+            child: Text(
+              'Add at least one photo.',
+              style: TextStyle(color: AppColors.error, fontSize: 12),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _QuantityStepper extends StatelessWidget {
+  const _QuantityStepper({required this.onUp, required this.onDown});
+
+  final VoidCallback onUp;
+  final VoidCallback onDown;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          InkWell(
+            onTap: onUp,
+            child: const Icon(Icons.keyboard_arrow_up, size: 20),
+          ),
+          InkWell(
+            onTap: onDown,
+            child: const Icon(Icons.keyboard_arrow_down, size: 20),
+          ),
+        ],
       ),
     );
   }
+}
+
+/// One photo slot on the form: either already on the listing (editing) or
+/// newly picked from the phone.
+class _FormPhoto {
+  const _FormPhoto.remote(ListingPhoto this.remote) : file = null;
+  const _FormPhoto.local(File this.file) : remote = null;
+
+  final ListingPhoto? remote;
+  final File? file;
 }

@@ -4,6 +4,7 @@ namespace App\Http\Requests\Auth;
 
 use App\Enums\ExperienceLevel;
 use App\Enums\GrowingSetup;
+use App\Support\UkAddress;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -23,6 +24,10 @@ class UpdateProfileRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
+        if ($this->has('address_postcode')) {
+            $this->merge(['address_postcode' => UkAddress::normalisePostcode($this->input('address_postcode'))]);
+        }
+
         if ($this->has('show_handover_radius')) {
             $this->merge([
                 'show_handover_radius' => filter_var(
@@ -53,6 +58,11 @@ class UpdateProfileRequest extends FormRequest
             'bio' => ['sometimes', 'nullable', 'string', 'max:300'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
             'location_label' => ['sometimes', 'nullable', 'string', 'max:255'],
+
+            ...UkAddress::rules(required: false),
+            // A new address moves the account's map location to its postcode.
+            'latitude' => ['required_with:longitude', 'numeric', 'between:-90,90'],
+            'longitude' => ['required_with:latitude', 'numeric', 'between:-180,180'],
 
             'growing_interests' => ['sometimes', 'nullable', 'array', 'max:10'],
             'growing_interests.*' => ['string', 'max:40'],

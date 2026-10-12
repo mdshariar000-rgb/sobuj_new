@@ -19,6 +19,15 @@ class GroupPolicy
     }
 
     /**
+     * Only site admins (see before()) create groups — everyone else asks
+     * for one with a group request, or is placed in groups automatically.
+     */
+    public function create(User $user): bool
+    {
+        return false;
+    }
+
+    /**
      * The group's creator, or any member holding the `admin` pivot role, may
      * update its details or delete it.
      */

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:shobuj_mobile/models/group.dart';
 import 'package:shobuj_mobile/models/group_member.dart';
 import 'package:shobuj_mobile/models/paginated_response.dart';
@@ -8,6 +9,8 @@ import 'package:shobuj_mobile/models/post.dart';
 import 'package:shobuj_mobile/providers/core_providers.dart';
 import 'package:shobuj_mobile/screens/groups/group_chat_screen.dart';
 import 'package:shobuj_mobile/screens/groups/group_detail_screen.dart';
+
+import 'package:shobuj_mobile/theme/app_theme.dart';
 
 import '../support/fake_api_client.dart';
 import '../support/fake_secure_storage_service.dart';
@@ -81,6 +84,44 @@ Future<void> _pumpGroupDetail(
 }
 
 void main() {
+  testWidgets(
+    'the group name in the dark app bar is white under the real app theme',
+    (tester) async {
+      // The app theme's AppBar title style has its own dark color, which
+      // used to beat this bar's white foregroundColor — dark on dark green.
+      GoogleFonts.config.allowRuntimeFetching = false;
+      final group = _buildGroup(id: 1, name: 'Tomato Growers', isMember: true);
+      final fakeClient = FakeApiClient();
+      final fakeStorage = FakeSecureStorageService();
+      await fakeStorage.saveToken('existing-token');
+      fakeClient.meResult = buildFakeUser(id: 1, name: 'Me');
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            apiClientProvider.overrideWithValue(fakeClient),
+            secureStorageProvider.overrideWithValue(fakeStorage),
+          ],
+          child: MaterialApp(
+            theme: AppTheme.light(),
+            home: GroupDetailScreen(group: group),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final title = find.descendant(
+        of: find.byType(AppBar),
+        matching: find.text('Tomato Growers'),
+      );
+      expect(title, findsOneWidget);
+      expect(
+        DefaultTextStyle.of(tester.element(title)).style.color,
+        Colors.white,
+      );
+    },
+  );
+
   testWidgets('shows the group header and its discussion posts', (
     tester,
   ) async {
@@ -144,7 +185,7 @@ void main() {
     await _pumpGroupDetail(tester, FakeApiClient(), notMember);
 
     final button = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Group Chat'),
+      find.widgetWithText(FilledButton, 'Chat'),
     );
     expect(button.onPressed, isNull);
   });
@@ -153,7 +194,7 @@ void main() {
     final member = _buildGroup(id: 1, name: 'Tomato Growers', isMember: true);
     await _pumpGroupDetail(tester, FakeApiClient(), member);
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Group Chat'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Chat'));
     await tester.pumpAndSettle();
 
     expect(find.byType(GroupChatScreen), findsOneWidget);
@@ -342,36 +383,33 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a private group shows Private Group and Request to Join, and '
-    'requesting flips it to a disabled Request Pending',
-    (tester) async {
-      final group = _buildGroup(
-        id: 1,
-        name: 'Rare Seed Traders',
-        isMember: false,
-        visibility: 'private',
-      );
-      final fakeClient = FakeApiClient()..joinGroupReturnsRequest = true;
+  testWidgets('a private group shows Private Group and Request to Join, and '
+      'requesting flips it to a disabled Request Pending', (tester) async {
+    final group = _buildGroup(
+      id: 1,
+      name: 'Rare Seed Traders',
+      isMember: false,
+      visibility: 'private',
+    );
+    final fakeClient = FakeApiClient()..joinGroupReturnsRequest = true;
 
-      await _pumpGroupDetail(tester, fakeClient, group);
+    await _pumpGroupDetail(tester, fakeClient, group);
 
-      expect(find.textContaining('Private Group'), findsOneWidget);
-      expect(
-        find.widgetWithText(FilledButton, 'Request to Join'),
-        findsOneWidget,
-      );
+    expect(find.textContaining('Private Group'), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, 'Request to Join'),
+      findsOneWidget,
+    );
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Request to Join'));
-      await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Request to Join'));
+    await tester.pumpAndSettle();
 
-      expect(fakeClient.joinedGroupId, 1);
-      expect(
-        find.widgetWithText(FilledButton, 'Request Pending'),
-        findsOneWidget,
-      );
-    },
-  );
+    expect(fakeClient.joinedGroupId, 1);
+    expect(
+      find.widgetWithText(FilledButton, 'Request Pending'),
+      findsOneWidget,
+    );
+  });
 
   testWidgets(
     'tapping Request Pending cancels the request and reverts the button',

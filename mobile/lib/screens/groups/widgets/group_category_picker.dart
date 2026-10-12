@@ -23,14 +23,10 @@ class GroupCategoryPicker extends ConsumerWidget {
     final categoriesAsync = ref.watch(groupCategoriesProvider);
 
     return categoriesAsync.when(
-      loading: () => const _PickerField(
-        enabled: false,
-        hint: 'Loading categories…',
-      ),
-      error: (error, _) => _PickerField(
-        enabled: false,
-        hint: 'Could not load categories',
-      ),
+      loading: () =>
+          const _PickerField(enabled: false, hint: 'Loading categories…'),
+      error: (error, _) =>
+          _PickerField(enabled: false, hint: 'Could not load categories'),
       data: (categories) => DropdownButtonFormField<String?>(
         key: const Key('create-group-category-field'),
         initialValue: value,

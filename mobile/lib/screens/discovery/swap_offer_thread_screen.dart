@@ -3,26 +3,35 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:timeago/timeago.dart' as timeago;
 
 import '../../models/app_user.dart';
 import '../../models/listing.dart';
+import '../../models/message_reaction.dart';
+import '../../models/message_reply.dart';
 import '../../models/report.dart';
 import '../../models/swap_message.dart';
 import '../../models/swap_offer.dart';
 import '../../providers/auth_providers.dart';
 import '../../providers/core_providers.dart';
 import '../../providers/discovery_providers.dart';
+import '../../providers/feed_marketplace_providers.dart';
 import '../../services/api_exception.dart';
 import '../../services/swap_offer_realtime_channel.dart';
 import '../../theme/app_colors.dart';
+import '../../widgets/chat_image_grid.dart';
+import '../../widgets/chat_reactions.dart';
+import '../../widgets/chat_reply.dart';
+import '../../widgets/pending_images_strip.dart';
 import '../../widgets/safety_actions.dart';
 import '../../widgets/user_avatar.dart';
 import 'listing_detail_screen.dart';
 import 'seller_profile_screen.dart';
+import 'widgets/deal_bar.dart';
+import 'widgets/listing_price.dart';
 import 'widgets/listing_thumbnail.dart';
+import '../../widgets/shimmer.dart';
 
 /// A single swap offer's message thread — real GET/POST against
 /// SwapOfferController/MessageController, with live delivery over a
@@ -44,6 +53,15 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
   final _scrollController = ScrollController();
   final _composerFocusNode = FocusNode();
   bool _isSending = false;
+
+  /// Photos picked for the next message, shown above the composer.
+  final List<File> _pendingImages = [];
+
+  /// The message the next one answers, shown above the composer.
+  MessageReply? _replyingTo;
+
+  /// Lets a tapped reply quote scroll back to the message it quotes.
+  final _messageKeys = <int, GlobalKey>{};
   late SwapOffer _swapOffer = widget.swapOffer;
   SwapOfferRealtimeChannel? _realtime;
   int _lastMessageCount = 0;
@@ -56,6 +74,11 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
         ref
             .read(swapOfferMessagesProvider(_swapOffer.id).notifier)
             .receiveMessage(message);
+      }
+      ..onReactions = (messageId, reactions) {
+        ref
+            .read(swapOfferMessagesProvider(_swapOffer.id).notifier)
+            .applyReactions(messageId, reactions);
       }
       ..onStatusUpdated = (status) {
         if (mounted) {
@@ -111,17 +134,34 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
 
   Future<void> _send() async {
     final body = _controller.text.trim();
-    if (body.isEmpty) return;
+    final images = List<File>.of(_pendingImages);
+    final replyTo = _replyingTo;
+    if (body.isEmpty && images.isEmpty) return;
 
     _controller.clear();
-    setState(() => _isSending = true);
+    setState(() {
+      _pendingImages.clear();
+      _replyingTo = null;
+      _isSending = true;
+    });
     try {
       await ref
           .read(swapOfferMessagesProvider(_swapOffer.id).notifier)
-          .sendMessage(body: body);
+          .sendMessage(
+            body: body.isEmpty ? null : body,
+            images: images,
+            replyTo: replyTo,
+          );
     } on ApiException catch (e) {
       if (mounted) {
+        // Put back what didn't send, unless the user already started over.
         if (_controller.text.isEmpty) _controller.text = body;
+        if (_pendingImages.isEmpty) {
+          setState(() => _pendingImages.addAll(images));
+        }
+        if (_replyingTo == null && replyTo != null) {
+          setState(() => _replyingTo = replyTo);
+        }
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
@@ -150,38 +190,102 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
     }
   }
 
-  Future<void> _sendImage() async {
-    final picked = await ImagePicker().pickImage(
-      source: ImageSource.gallery,
-      maxWidth: 1600,
-      imageQuality: 85,
-    );
-    if (picked == null) return;
-
-    setState(() => _isSending = true);
+  Future<void> _react(int messageId, String emoji) async {
     try {
       await ref
           .read(swapOfferMessagesProvider(_swapOffer.id).notifier)
-          .sendMessage(image: File(picked.path));
+          .react(messageId, emoji);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(e.message)));
       }
-    } finally {
-      if (mounted) setState(() => _isSending = false);
     }
   }
 
-  Future<void> _updateStatus(SwapOfferStatus status) async {
+  void _startReply(SwapMessage message) {
+    setState(
+      () => _replyingTo = MessageReply(
+        id: message.id,
+        body: message.body,
+        senderName: message.sender?.name,
+        imageUrl: message.imageUrls.firstOrNull,
+        imageCount: message.imageUrls.length + message.localImages.length,
+      ),
+    );
+    _composerFocusNode.requestFocus();
+  }
+
+  /// Scrolls to the quoted message — directly if it's built, otherwise to
+  /// roughly where it sits in the list first so the lazy list builds it.
+  void _scrollToMessage(int messageId, List<SwapMessage> messages) {
+    void reveal() {
+      final target = _messageKeys[messageId]?.currentContext;
+      if (target != null) {
+        Scrollable.ensureVisible(
+          target,
+          alignment: 0.3,
+          duration: const Duration(milliseconds: 300),
+        );
+      }
+    }
+
+    if (_messageKeys[messageId]?.currentContext != null) {
+      reveal();
+      return;
+    }
+    final index = messages.indexWhere((m) => m.id == messageId);
+    if (index < 0 || !_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    _scrollController.jumpTo(
+      position.maxScrollExtent * index / messages.length,
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => reveal());
+  }
+
+  /// Adds photos to the next message rather than sending straight away, so
+  /// several can go together, with a caption.
+  Future<void> _addImages() async {
+    final remaining = maxChatImages - _pendingImages.length;
+    if (remaining <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You can send up to $maxChatImages photos at a time.'),
+        ),
+      );
+      return;
+    }
+
+    final picked = await pickChatImagesFromGallery(remaining: remaining);
+    if (picked.isEmpty || !mounted) return;
+    setState(() => _pendingImages.addAll(picked));
+  }
+
+  Future<void> _updateStatus(
+    SwapOfferStatus status, {
+    int? quantitySold,
+  }) async {
     try {
       final apiClient = ref.read(apiClientProvider);
       final updated = await apiClient.updateSwapOfferStatus(
         _swapOffer.id,
         status,
+        quantitySold: quantitySold,
       );
       if (mounted) setState(() => _swapOffer = updated);
+      // Accepting reserves the listing, and cancelling or completing the deal
+      // releases or closes it, so the marketplace lists are out of date.
+      if (status == SwapOfferStatus.accepted ||
+          status == SwapOfferStatus.canceled ||
+          status == SwapOfferStatus.completed) {
+        if (ref.exists(nearbyListingsProvider)) {
+          ref.invalidate(nearbyListingsProvider);
+        }
+        if (ref.exists(feedMarketplaceProvider)) {
+          ref.invalidate(feedMarketplaceProvider);
+        }
+      }
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -234,6 +338,16 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
                       ),
                     ),
             ),
+            if (isRequester &&
+                listing != null &&
+                _swapOffer.status == SwapOfferStatus.completed)
+              _ReviewPrompt(
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => ListingDetailScreen(listing: listing),
+                  ),
+                ),
+              ),
             if (listing != null)
               _PinnedListingCard(
                 listing: listing,
@@ -243,24 +357,26 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
                   ),
                 ),
               ),
+            if (listing != null)
+              DealBar(
+                swapOffer: _swapOffer,
+                isSeller: !isRequester,
+                onUpdateStatus: _updateStatus,
+              ),
             const _SafetyNotice(),
             Expanded(
               child: messagesAsync.when(
-                loading: () => const Center(child: CircularProgressIndicator()),
+                loading: () => const ShimmerChat(),
                 error: (error, _) => Center(child: Text('$error')),
                 data: (messages) {
                   return ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(16),
-                    itemCount: messages.length + 1,
+                    itemCount: messages.length,
                     itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return _OfferSummaryBubble(swapOffer: _swapOffer);
-                      }
-
-                      final message = messages[index - 1];
-                      final previous = index - 2 >= 0
-                          ? messages[index - 2]
+                      final message = messages[index];
+                      final previous = index - 1 >= 0
+                          ? messages[index - 1]
                           : null;
                       final showDateDivider =
                           previous == null ||
@@ -271,9 +387,24 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
                         children: [
                           if (showDateDivider)
                             _DateDivider(date: message.createdAt),
-                          _MessageBubble(
-                            message: message,
-                            isMine: message.sender?.id == currentUserId,
+                          KeyedSubtree(
+                            key: _messageKeys.putIfAbsent(
+                              message.id,
+                              GlobalKey.new,
+                            ),
+                            child: _MessageBubble(
+                              message: message,
+                              isMine: message.sender?.id == currentUserId,
+                              onReply: () => _startReply(message),
+                              myUserId: currentUserId,
+                              onReact: (emoji) => _react(message.id, emoji),
+                              onQuoteTap: message.replyToId == null
+                                  ? null
+                                  : () => _scrollToMessage(
+                                      message.replyToId!,
+                                      messages,
+                                    ),
+                            ),
                           ),
                         ],
                       );
@@ -311,6 +442,16 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
                   ],
                 ),
               ),
+            if (_replyingTo != null)
+              ReplyComposerBar(
+                reply: _replyingTo!,
+                onCancel: () => setState(() => _replyingTo = null),
+              ),
+            PendingImagesStrip(
+              files: _pendingImages,
+              onRemove: (index) =>
+                  setState(() => _pendingImages.removeAt(index)),
+            ),
             SafeArea(
               top: false,
               child: Padding(
@@ -318,9 +459,9 @@ class _SwapOfferThreadScreenState extends ConsumerState<SwapOfferThreadScreen> {
                 child: Row(
                   children: [
                     IconButton(
-                      onPressed: _isSending ? null : _sendImage,
+                      onPressed: _isSending ? null : _addImages,
                       icon: const Icon(Icons.add_circle_outline),
-                      tooltip: 'Send a photo',
+                      tooltip: 'Attach photos',
                     ),
                     Expanded(
                       child: TextField(
@@ -361,6 +502,48 @@ String? _roleLabel(AppUser? user) {
   final level = user?.experienceLevel?.label;
   if (level != null) return '$level Grower';
   return null;
+}
+
+/// Shown to the buyer once a deal is completed: reviews are only open to
+/// people who completed a deal for the listing.
+class _ReviewPrompt extends StatelessWidget {
+  const _ReviewPrompt({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.primary.withValues(alpha: 0.1),
+      child: InkWell(
+        key: const Key('swap-review-prompt'),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
+          child: Row(
+            children: [
+              const Icon(Icons.star_outline, color: AppColors.primary),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'Deal completed. How did it go?',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                'Leave a review',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: AppColors.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _ThreadHeader extends StatelessWidget {
@@ -450,6 +633,15 @@ class _ThreadHeader extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      if (!isOwner)
+                        const Text(
+                          'Message Seller',
+                          style: TextStyle(
+                            color: AppColors.mint,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       Text(
                         name,
                         maxLines: 1,
@@ -525,64 +717,45 @@ class _PinnedListingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        color: AppColors.forestPanel,
-        child: Row(
-          children: [
-            ListingThumbnail(url: listing.thumbnailUrl, size: 44),
-            const SizedBox(width: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppColors.mint,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                listing.transactionType.label,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.forestDark,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    listing.price != null
-                        ? NumberFormat.simpleCurrency().format(listing.price)
-                        : listing.transactionType.label,
-                    style: const TextStyle(
-                      color: AppColors.mint,
-                      fontWeight: FontWeight.w700,
+    return Material(
+      color: AppColors.surfaceContainer,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 10, 10),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppColors.border)),
+          ),
+          child: Row(
+            children: [
+              ListingThumbnail(url: listing.thumbnailUrl, size: 48),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      listing.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textDark,
+                      ),
                     ),
-                  ),
-                  Text(
-                    listing.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-            const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'View',
-                  style: TextStyle(color: AppColors.mint, fontSize: 12),
+                    Text(
+                      listingPriceLabel(listing),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
                 ),
-                Icon(Icons.chevron_right, color: AppColors.mint, size: 16),
-              ],
-            ),
-          ],
+              ),
+              const Icon(Icons.chevron_right, color: AppColors.textMuted),
+            ],
+          ),
         ),
       ),
     );
@@ -594,35 +767,34 @@ class _SafetyNotice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
           color: AppColors.surfaceMuted,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Row(
+        child: const Column(
           children: [
-            Icon(Icons.shield_outlined, size: 16, color: AppColors.textMuted),
-            SizedBox(width: 8),
-            Expanded(
-              child: Text.rich(
-                TextSpan(
-                  children: [
-                    TextSpan(
-                      text: 'Safe Grower Exchange: ',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    TextSpan(
-                      text:
-                          'inspect live plants and seeds during daytime meetups.',
-                    ),
-                  ],
-                ),
-                style: TextStyle(fontSize: 11.5, color: AppColors.textDark),
+            Icon(Icons.verified_user, size: 20, color: AppColors.primary),
+            SizedBox(height: 4),
+            Text(
+              'Chat safely within Shobuj Marketplace',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textDark,
               ),
+            ),
+            SizedBox(height: 2),
+            Text(
+              'Keep your conversations here. Do not share personal contact '
+              'details such as phone number or email.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
             ),
           ],
         ),
@@ -700,84 +872,22 @@ class _DateDivider extends StatelessWidget {
 /// A synthesized, not-a-real-message summary of the offer that opened this
 /// thread — built entirely from real [SwapOffer] fields (requester, the
 /// listing's real price, and live status), not a fabricated message row.
-class _OfferSummaryBubble extends StatelessWidget {
-  const _OfferSummaryBubble({required this.swapOffer});
-
-  final SwapOffer swapOffer;
-
-  @override
-  Widget build(BuildContext context) {
-    final listing = swapOffer.listing;
-    final requesterName = swapOffer.requester?.name ?? 'Someone';
-    final text = listing?.price != null
-        ? '$requesterName offered '
-              '${NumberFormat.simpleCurrency().format(listing!.price)} '
-              '(Listing Price)'
-        : '$requesterName proposed a trade'
-              '${listing != null ? ' for "${listing.title}"' : ''}';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceContainer,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.surfaceMuted),
-      ),
-      child: Row(
-        children: [
-          const CircleAvatar(
-            radius: 16,
-            backgroundColor: AppColors.mint,
-            child: Icon(
-              Icons.handshake_outlined,
-              size: 16,
-              color: AppColors.forestDark,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-          ),
-          const SizedBox(width: 8),
-          _OfferStatusPill(status: swapOffer.status),
-        ],
-      ),
-    );
-  }
-}
-
-class _OfferStatusPill extends StatelessWidget {
-  const _OfferStatusPill({required this.status});
-
-  final SwapOfferStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: status.isOpen
-            ? AppColors.mint.withValues(alpha: 0.4)
-            : AppColors.surfaceMuted,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        status.label,
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700),
-      ),
-    );
-  }
-}
-
 class _MessageBubble extends StatelessWidget {
-  const _MessageBubble({required this.message, required this.isMine});
+  const _MessageBubble({
+    required this.message,
+    required this.isMine,
+    this.onReply,
+    this.onQuoteTap,
+    this.myUserId,
+    this.onReact,
+  });
 
   final SwapMessage message;
   final bool isMine;
+  final VoidCallback? onReply;
+  final VoidCallback? onQuoteTap;
+  final int? myUserId;
+  final ValueChanged<String>? onReact;
 
   @override
   Widget build(BuildContext context) {
@@ -801,7 +911,7 @@ class _MessageBubble extends StatelessWidget {
       );
     }
 
-    final hasImage = message.localImage != null || message.imageUrl != null;
+    final hasImage = message.hasImages;
 
     final bubble = Opacity(
       opacity: message.isPending ? 0.75 : 1,
@@ -821,28 +931,21 @@ class _MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (message.localImage != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.file(
-                  message.localImage!,
-                  width: 160,
-                  height: 160,
-                  fit: BoxFit.cover,
+            if (message.replyToId != null)
+              Padding(
+                padding: hasImage
+                    ? const EdgeInsets.fromLTRB(4, 4, 4, 0)
+                    : EdgeInsets.zero,
+                child: ReplyQuote(
+                  reply: message.replyTo,
+                  onDarkBubble: isMine,
+                  onTap: onQuoteTap,
                 ),
-              )
-            else if (message.imageUrl != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Image.network(
-                  message.imageUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, _, _) => const SizedBox(
-                    width: 160,
-                    height: 160,
-                    child: Icon(Icons.broken_image_outlined),
-                  ),
-                ),
+              ),
+            if (hasImage)
+              ChatImageGrid(
+                urls: message.imageUrls,
+                files: message.localImages,
               ),
             if (message.body != null && message.body!.isNotEmpty)
               Padding(
@@ -888,39 +991,115 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
 
+    final canAct = !message.isPending;
+
     if (isMine) {
-      return Align(alignment: Alignment.centerRight, child: bubble);
+      return SwipeToReply(
+        onReply: canAct ? onReply : null,
+        child: Align(
+          alignment: Alignment.centerRight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              GestureDetector(
+                key: Key('message-bubble-${message.id}'),
+                onLongPress: canAct ? () => _showMessageActions(context) : null,
+                child: bubble,
+              ),
+              ReactionChips(
+                reactions: message.reactions,
+                myUserId: myUserId,
+                onTap: canAct ? onReact : null,
+              ),
+            ],
+          ),
+        ),
+      );
     }
 
     final sender = message.sender;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        GestureDetector(
-          onTap: () => openUserProfile(context, sender?.id),
-          child: UserAvatar(
-            name: sender?.name ?? '?',
-            avatarUrl: sender?.avatarUrl,
-            radius: 12,
+    return SwipeToReply(
+      onReply: canAct ? onReply : null,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          GestureDetector(
+            onTap: () => openUserProfile(context, sender?.id),
+            child: UserAvatar(
+              name: sender?.name ?? '?',
+              avatarUrl: sender?.avatarUrl,
+              radius: 12,
+            ),
           ),
-        ),
-        const SizedBox(width: 6),
-        // Long-press a message from the other person to report it.
-        Flexible(
-          child: GestureDetector(
-            key: Key('message-bubble-${message.id}'),
-            onLongPress: message.isPending
-                ? null
-                : () => showReportSheet(
+          const SizedBox(width: 6),
+          // Long-press a message to reply to it, or (from the other person)
+          // report it.
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                GestureDetector(
+                  key: Key('message-bubble-${message.id}'),
+                  onLongPress: canAct
+                      ? () => _showMessageActions(context)
+                      : null,
+                  child: bubble,
+                ),
+                ReactionChips(
+                  reactions: message.reactions,
+                  myUserId: myUserId,
+                  onTap: canAct ? onReact : null,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMessageActions(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ReactionPickerRow(
+              current: myReaction(message.reactions, myUserId),
+              onPick: (emoji) {
+                Navigator.of(sheetContext).pop();
+                onReact?.call(emoji);
+              },
+            ),
+            ListTile(
+              key: const Key('reply-to-message'),
+              leading: const Icon(Icons.reply),
+              title: const Text('Reply'),
+              onTap: () {
+                Navigator.of(sheetContext).pop();
+                onReply?.call();
+              },
+            ),
+            if (!isMine)
+              ListTile(
+                key: const Key('report-message'),
+                leading: const Icon(Icons.flag_outlined),
+                title: const Text('Report message'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  showReportSheet(
                     context,
                     target: ReportTarget.message,
                     targetId: message.id,
-                  ),
-            child: bubble,
-          ),
+                  );
+                },
+              ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }

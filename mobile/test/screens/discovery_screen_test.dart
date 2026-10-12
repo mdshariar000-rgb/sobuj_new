@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:geolocator/geolocator.dart';
+
 import 'package:shobuj_mobile/models/app_user.dart';
 import 'package:shobuj_mobile/models/enums.dart';
 import 'package:shobuj_mobile/models/geo_point.dart';
@@ -17,6 +17,7 @@ import 'package:shobuj_mobile/providers/location_providers.dart';
 import 'package:shobuj_mobile/screens/discovery/discovery_screen.dart';
 import 'package:shobuj_mobile/screens/discovery/favorites_screen.dart';
 import 'package:shobuj_mobile/screens/discovery/swap_offer_thread_screen.dart';
+import 'package:shobuj_mobile/screens/discovery/widgets/listing_grid_card.dart';
 import 'package:shobuj_mobile/screens/profile/profile_screen.dart';
 import 'package:shobuj_mobile/services/api_client.dart';
 import 'package:shobuj_mobile/services/swap_offer_realtime_channel.dart';
@@ -149,18 +150,7 @@ Listing _buildListing({
   );
 }
 
-final _fakePosition = Position(
-  latitude: 23.780636,
-  longitude: 90.279785,
-  timestamp: DateTime(2026, 1, 1),
-  accuracy: 5,
-  altitude: 0,
-  altitudeAccuracy: 0,
-  heading: 0,
-  headingAccuracy: 0,
-  speed: 0,
-  speedAccuracy: 0,
-);
+const _fakeLocation = GeoPoint(latitude: 53.8173, longitude: -1.5776);
 
 void main() {
   testWidgets('shows listings returned by the API in list view', (
@@ -180,7 +170,7 @@ void main() {
       ProviderScope(
         overrides: [
           apiClientProvider.overrideWithValue(fakeClient),
-          deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
         ],
         child: const MaterialApp(home: DiscoveryScreen()),
       ),
@@ -188,16 +178,70 @@ void main() {
 
     await tester.pumpAndSettle();
 
+    // Two-column grid: both cards share the first row, each with its
+    // title, deal label and category tag.
     expect(find.text('Cherry Tomato Seeds'), findsOneWidget);
-    expect(find.text('0.9 km away'), findsOneWidget);
-    expect(find.textContaining('Looking for: Basil'), findsOneWidget);
-
-    // The category chips/banner/location row above the list push the
-    // second card out of the initial viewport — scroll past them so its
-    // lazily-built sliver content actually exists in the tree.
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
-    await tester.pumpAndSettle();
     expect(find.text('Mint Cuttings'), findsOneWidget);
+    expect(find.byType(ListingGridCard), findsNWidgets(2));
+    expect(
+      find.descendant(
+        of: find.byType(ListingGridCard),
+        matching: find.text('Seeds & Scions'),
+      ),
+      findsNWidgets(2),
+    );
+  });
+
+  testWidgets('Buy narrows the grid to items for sale, Sell opens the form', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient([
+      _buildListing(id: 1, title: 'Cherry Tomato Seeds'),
+    ]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeClient),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
+        ],
+        child: const MaterialApp(home: DiscoveryScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('marketplace-buy')));
+    await tester.pumpAndSettle();
+    expect(fakeClient.lastCallArgs?['transactionType'], TransactionType.sell);
+
+    // Tapping Buy again goes back to everything.
+    await tester.tap(find.byKey(const Key('marketplace-buy')));
+    await tester.pumpAndSettle();
+    expect(fakeClient.lastCallArgs?['transactionType'], isNull);
+
+    await tester.tap(find.byKey(const Key('marketplace-sell')));
+    await tester.pumpAndSettle();
+    expect(find.text('Sell an Item'), findsOneWidget);
+  });
+
+  testWidgets('searches around the location chosen at registration', (
+    tester,
+  ) async {
+    final fakeClient = FakeApiClient([]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeClient),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
+        ],
+        child: const MaterialApp(home: DiscoveryScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(fakeClient.lastCallArgs?['latitude'], _fakeLocation.latitude);
+    expect(fakeClient.lastCallArgs?['longitude'], _fakeLocation.longitude);
   });
 
   testWidgets('shows an empty state when there are no nearby listings', (
@@ -209,7 +253,7 @@ void main() {
       ProviderScope(
         overrides: [
           apiClientProvider.overrideWithValue(fakeClient),
-          deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
         ],
         child: const MaterialApp(home: DiscoveryScreen()),
       ),
@@ -231,7 +275,7 @@ void main() {
         ProviderScope(
           overrides: [
             apiClientProvider.overrideWithValue(fakeClient),
-            deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+            accountLocationProvider.overrideWith((ref) async => _fakeLocation),
           ],
           child: const MaterialApp(home: DiscoveryScreen()),
         ),
@@ -252,7 +296,7 @@ void main() {
     },
   );
 
-  testWidgets('selecting a category chip refetches with that category', (
+  testWidgets('choosing a category in Filters refetches with that category', (
     tester,
   ) async {
     final fakeClient = FakeApiClient([
@@ -263,26 +307,42 @@ void main() {
       ProviderScope(
         overrides: [
           apiClientProvider.overrideWithValue(fakeClient),
-          deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
         ],
         child: const MaterialApp(home: DiscoveryScreen()),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Seeds & Scions'));
+    // Category is picked in the Filters sheet and only applies on "Apply".
+    await tester.tap(find.byKey(const Key('discovery-filter-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(
+        of: find.byType(BottomSheet),
+        matching: find.text('Seeds & Scions'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(fakeClient.lastCallArgs?['category'], isNull);
+    await tester.tap(find.byKey(const Key('filter-apply')));
     await tester.pumpAndSettle();
 
     expect(fakeClient.lastCallArgs?['category'], 'Seeds & Scions');
 
-    // Tapping the same chip again clears the filter.
-    await tester.tap(find.widgetWithText(ChoiceChip, 'Seeds & Scions'));
+    // Clear All + Apply removes it again.
+    await tester.tap(find.byKey(const Key('discovery-filter-button')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('filter-clear-all')));
+    await tester.tap(find.byKey(const Key('filter-apply')));
     await tester.pumpAndSettle();
 
     expect(fakeClient.lastCallArgs?['category'], isNull);
   });
 
-  testWidgets('tapping Propose Trade opens the offer thread', (tester) async {
+  testWidgets('the chat button on a card opens the conversation', (
+    tester,
+  ) async {
     final listing = _buildListing(id: 1, title: 'Cherry Tomato Seeds');
     final fakeClient = FakeApiClient([listing]);
     fakeClient.createSwapOfferResult = SwapOffer(
@@ -302,7 +362,7 @@ void main() {
       ProviderScope(
         overrides: [
           apiClientProvider.overrideWithValue(fakeClient),
-          deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
           swapOfferRealtimeChannelProvider.overrideWith(
             (ref, swapOfferId) => FakeRealtimeChannel(),
           ),
@@ -312,46 +372,17 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // The category chips/banner/location row above the list push the card's
-    // CTA below the initial viewport — scroll past them first.
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -600));
+    await tester.ensureVisible(find.byKey(const Key('listing-chat-1')));
     await tester.pumpAndSettle();
-
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Propose Trade'));
+    await tester.tap(find.byKey(const Key('listing-chat-1')));
     await tester.pumpAndSettle();
 
     expect(find.byType(SwapOfferThreadScreen), findsOneWidget);
     expect(fakeClient.lastOfferedListingId, 1);
   });
 
-  testWidgets('shows a location-permission error with a retry action', (
-    tester,
-  ) async {
-    final fakeClient = FakeApiClient([]);
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          apiClientProvider.overrideWithValue(fakeClient),
-          deviceLocationProvider.overrideWith(
-            (ref) async => throw const LocationPermissionDeniedException(),
-          ),
-        ],
-        child: const MaterialApp(home: DiscoveryScreen()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(
-      find.textContaining('Location permission is required'),
-      findsOneWidget,
-    );
-    expect(find.widgetWithText(FilledButton, 'Try again'), findsOneWidget);
-  });
-
   testWidgets(
-    'the header has no promotional description card, and its avatar/'
-    'favorites icons open the right screens',
+    'explains when the account has no location, with a retry action',
     (tester) async {
       final fakeClient = FakeApiClient([]);
 
@@ -359,30 +390,54 @@ void main() {
         ProviderScope(
           overrides: [
             apiClientProvider.overrideWithValue(fakeClient),
-            deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+            accountLocationProvider.overrideWith(
+              (ref) async => throw const AccountLocationMissingException(),
+            ),
           ],
           child: const MaterialApp(home: DiscoveryScreen()),
         ),
       );
       await tester.pumpAndSettle();
 
-      // The old white "Marketplace / Buy, sell, and trade..." card (with a
-      // second, redundant avatar+heart pair) is gone — the brand bar is the
-      // header now.
-      expect(find.textContaining('Buy, sell, and trade'), findsNothing);
-      expect(find.text('Marketplace'), findsNothing);
-
-      await tester.tap(find.byKey(const Key('profile-avatar-button')));
-      await tester.pumpAndSettle();
-      expect(find.byType(ProfileScreen), findsOneWidget);
-      Navigator.of(tester.element(find.byType(ProfileScreen))).pop();
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byTooltip('Favorites'));
-      await tester.pumpAndSettle();
-      expect(find.byType(FavoritesScreen), findsOneWidget);
+      expect(
+        find.textContaining('Your account has no location set'),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(FilledButton, 'Try again'), findsOneWidget);
     },
   );
+
+  testWidgets('the header has no promotional description card, and its avatar/'
+      'favorites icons open the right screens', (tester) async {
+    final fakeClient = FakeApiClient([]);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          apiClientProvider.overrideWithValue(fakeClient),
+          accountLocationProvider.overrideWith((ref) async => _fakeLocation),
+        ],
+        child: const MaterialApp(home: DiscoveryScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // The old white "Marketplace / Buy, sell, and trade..." card (with a
+    // second, redundant avatar+heart pair) is gone — the brand bar is the
+    // header now.
+    expect(find.textContaining('Buy, sell, and trade'), findsNothing);
+    expect(find.text('Marketplace'), findsNothing);
+
+    await tester.tap(find.byKey(const Key('profile-avatar-button')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfileScreen), findsOneWidget);
+    Navigator.of(tester.element(find.byType(ProfileScreen))).pop();
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Favorites'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FavoritesScreen), findsOneWidget);
+  });
 
   testWidgets(
     'lays out without overflow at a real phone width (not the wider default test surface)',
@@ -403,7 +458,7 @@ void main() {
         ProviderScope(
           overrides: [
             apiClientProvider.overrideWithValue(fakeClient),
-            deviceLocationProvider.overrideWith((ref) async => _fakePosition),
+            accountLocationProvider.overrideWith((ref) async => _fakeLocation),
           ],
           child: const MaterialApp(home: DiscoveryScreen()),
         ),

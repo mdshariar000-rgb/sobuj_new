@@ -20,4 +20,18 @@ class ListingCategory extends Model
     protected $fillable = [
         'name',
     ];
+
+    /**
+     * Renaming a category in the admin panel carries its listings along —
+     * otherwise they'd keep the old name and drop out of its filter.
+     */
+    protected static function booted(): void
+    {
+        static::updated(function (ListingCategory $category) {
+            if ($category->wasChanged('name')) {
+                Listing::where('listing_type', $category->getOriginal('name'))
+                    ->update(['listing_type' => $category->name]);
+            }
+        });
+    }
 }

@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/auth_providers.dart';
+import '../../providers/core_providers.dart';
+import '../../services/social_sign_in_service.dart';
 import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
 import '../legal/privacy_policy_screen.dart';
 import '../legal/terms_screen.dart';
+import 'address_screen.dart';
 import 'blocked_users_screen.dart';
 
 /// Profile → Privacy & Safety: blocked users, the legal pages, and permanent
@@ -36,10 +39,25 @@ class PrivacySafetyScreen extends ConsumerWidget {
         title: const Text('Privacy & Safety'),
         backgroundColor: AppColors.forestDark,
         foregroundColor: Colors.white,
+        // The theme's title style carries its own dark color, which beats
+        // foregroundColor — set white explicitly for this dark bar.
+        titleTextStyle: Theme.of(
+          context,
+        ).appBarTheme.titleTextStyle?.copyWith(color: Colors.white),
       ),
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          ListTile(
+            key: const Key('address-row'),
+            leading: const Icon(Icons.home_outlined),
+            title: const Text('Your address'),
+            subtitle: const Text('Private — only you and our team see it'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const AddressScreen())),
+          ),
           ListTile(
             key: const Key('blocked-users-row'),
             leading: const Icon(Icons.block),
@@ -62,9 +80,9 @@ class PrivacySafetyScreen extends ConsumerWidget {
             leading: const Icon(Icons.description_outlined),
             title: const Text('Terms of Use'),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const TermsScreen()),
-            ),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const TermsScreen())),
           ),
           const Divider(height: 32),
           ListTile(
@@ -104,7 +122,21 @@ class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
     super.dispose();
   }
 
+  /// A Google/Apple account with no password confirms by signing in with
+  /// that provider again.
+  SocialProvider? get _confirmWith {
+    final user = ref.watch(authControllerProvider).valueOrNull;
+    if (user == null || user.hasPassword) return null;
+    return user.signedInWith
+        .map(SocialProvider.fromValue)
+        .whereType<SocialProvider>()
+        .firstOrNull;
+  }
+
   Future<void> _delete() async {
+    final provider = _confirmWith;
+    if (provider != null) return _deleteWithProvider(provider);
+
     if (_passwordController.text.isEmpty) {
       setState(() => _error = 'Enter your password to confirm.');
       return;
@@ -129,8 +161,43 @@ class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
     }
   }
 
+  Future<void> _deleteWithProvider(SocialProvider provider) async {
+    setState(() {
+      _deleting = true;
+      _error = null;
+    });
+    try {
+      final config = await ref.read(socialConfigProvider.future);
+      final credential = await ref
+          .read(socialSignInServiceProvider)
+          .signIn(provider, config);
+      if (credential == null) {
+        if (mounted) setState(() => _deleting = false);
+        return;
+      }
+      await ref
+          .read(authControllerProvider.notifier)
+          .deleteAccount(confirmWith: credential);
+      if (mounted) Navigator.of(context).pop(true);
+    } on SocialSignInException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = false;
+        _error = e.message;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = false;
+        _error = e.message;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final confirmWith = _confirmWith;
+
     return AlertDialog(
       title: const Text('Delete your account?'),
       content: SingleChildScrollView(
@@ -140,23 +207,32 @@ class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
           children: [
             const Text(
               'This permanently deletes your profile, listings, posts, '
-              'comments, events, messages, AI conversations, and photos, and '
-              'cancels any active subscription. This cannot be undone.',
+              'comments, events, messages, and photos. This cannot be undone.',
             ),
             const SizedBox(height: 16),
-            TextField(
-              key: const Key('delete-account-password'),
-              controller: _passwordController,
-              obscureText: true,
-              enabled: !_deleting,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'Confirm your password',
-                errorText: _error,
-                errorMaxLines: 3,
+            if (confirmWith != null) ...[
+              Text(
+                'To confirm, sign in with ${confirmWith.label} again.',
+                key: const Key('delete-account-confirm-with'),
               ),
-              onSubmitted: (_) => _delete(),
-            ),
+              if (_error != null) ...[
+                const SizedBox(height: 8),
+                Text(_error!, style: const TextStyle(color: AppColors.error)),
+              ],
+            ] else
+              TextField(
+                key: const Key('delete-account-password'),
+                controller: _passwordController,
+                obscureText: true,
+                enabled: !_deleting,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Confirm your password',
+                  errorText: _error,
+                  errorMaxLines: 3,
+                ),
+                onSubmitted: (_) => _delete(),
+              ),
           ],
         ),
       ),
@@ -178,7 +254,11 @@ class _DeleteAccountDialogState extends ConsumerState<_DeleteAccountDialog> {
                     color: Colors.white,
                   ),
                 )
-              : const Text('Delete account'),
+              : Text(
+                  confirmWith != null
+                      ? 'Confirm with ${confirmWith.label}'
+                      : 'Delete account',
+                ),
         ),
       ],
     );

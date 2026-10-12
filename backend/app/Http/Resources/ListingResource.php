@@ -26,6 +26,13 @@ class ListingResource extends JsonResource
             'listing_type' => $this->listing_type,
             'transaction_type' => $this->transaction_type->value,
             'price' => $this->price !== null ? (float) $this->price : null,
+            'quantity' => $this->quantity,
+            // Private: buyers ask for contact details in chat, so only the
+            // seller (and admins) ever get it back.
+            'contact' => $this->when(
+                $request->user()?->id === $this->user_id || (bool) $request->user()?->is_admin,
+                fn () => $this->contact,
+            ),
             'status' => $this->status->value,
             'looking_for' => $this->looking_for,
             'handover_note' => $this->handover_note,
@@ -37,10 +44,24 @@ class ListingResource extends JsonResource
                 fn () => round($this->distance_meters / 1000, 2),
             ),
             'views_count' => (int) $this->views_count,
+            'average_rating' => $this->when(
+                array_key_exists('reviews_avg_rating', $this->resource->getAttributes()),
+                fn () => $this->reviews_avg_rating !== null ? round((float) $this->reviews_avg_rating, 1) : null,
+            ),
+            'reviews_count' => $this->when(
+                array_key_exists('reviews_count', $this->resource->getAttributes()),
+                fn () => (int) $this->reviews_count,
+            ),
             'photos' => ListingPhotoResource::collection($this->whenLoaded('photos')),
             'is_saved' => $this->when(
                 array_key_exists('is_saved', $this->resource->getAttributes()),
                 fn () => (bool) $this->is_saved,
+            ),
+            // Only on a single-listing fetch: whether the caller completed a
+            // deal for it and so may leave a review.
+            'can_review' => $this->when(
+                array_key_exists('can_review', $this->resource->getAttributes()),
+                fn () => (bool) $this->can_review,
             ),
             'owner' => new UserResource($this->whenLoaded('user')),
             'created_at' => $this->created_at?->toIso8601String(),

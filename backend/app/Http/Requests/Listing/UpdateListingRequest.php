@@ -29,17 +29,25 @@ class UpdateListingRequest extends FormRequest
             'listing_type' => ['sometimes', Rule::exists('listing_categories', 'name')],
             'transaction_type' => ['sometimes', Rule::enum(TransactionType::class)],
 
+            // A sell listing must keep a price — so it's required when the
+            // price itself is being changed (can't blank it) or the listing
+            // is being switched to a paid type. Edits that don't touch it
+            // (marking sold, changing quantity or photos) needn't send it.
             'price' => [
-                Rule::requiredIf(fn () => in_array(
-                    $this->input('transaction_type', $this->route('listing')?->transaction_type?->value),
-                    ['sell', 'swap_or_cash'],
-                    true,
-                )),
+                Rule::requiredIf(fn () => in_array($this->input('transaction_type'), ['sell', 'swap_or_cash'], true)
+                    || ($this->has('price') && in_array(
+                        $this->input('transaction_type', $this->route('listing')?->transaction_type?->value),
+                        ['sell', 'swap_or_cash'],
+                        true,
+                    ))),
                 'nullable',
                 'numeric',
                 'min:0',
                 'max:99999.99',
             ],
+
+            'quantity' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100000'],
+            'contact' => ['sometimes', 'nullable', 'string', 'max:255'],
 
             'looking_for' => ['sometimes', 'nullable', 'string', 'max:1000'],
             'handover_note' => ['sometimes', 'nullable', 'string', 'max:500'],
@@ -50,6 +58,10 @@ class UpdateListingRequest extends FormRequest
 
             'photos' => ['nullable', 'array', 'max:6'],
             'photos.*' => ['image', 'mimes:jpeg,png,webp', 'max:8192'],
+
+            // Photos to drop while editing — ids of this listing's own photos.
+            'remove_photo_ids' => ['nullable', 'array'],
+            'remove_photo_ids.*' => ['integer'],
         ];
     }
 }

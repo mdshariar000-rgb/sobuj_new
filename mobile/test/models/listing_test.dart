@@ -76,6 +76,8 @@ void main() {
         'listing_type': 'live_plants',
         'transaction_type': 'sell',
         'price': 25.5,
+        'quantity': 10,
+        'contact': '07700 900123',
         'status': 'active',
         'looking_for': null,
         'location': null,
@@ -87,6 +89,8 @@ void main() {
       final listing = Listing.fromJson(json);
 
       expect(listing.price, 25.5);
+      expect(listing.quantity, 10);
+      expect(listing.contact, '07700 900123');
       expect(listing.transactionType, TransactionType.sell);
       expect(listing.location, isNull);
     });

@@ -2,17 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../providers/shell_providers.dart';
-import '../agri_ai/agri_ai_screen.dart';
 import '../discovery/discovery_screen.dart';
 import '../events/events_screen.dart';
 import '../groups/groups_screen.dart';
 import '../home/home_feed_screen.dart';
 
-/// The signed-in app's root: a 5-tab bottom nav shell (Home / Groups /
-/// Events / Agri-AI / Marketplace). Marketplace is Discovery — the
+/// The signed-in app's root: a 4-tab bottom nav shell (Home / Groups /
+/// Events / Marketplace). Marketplace is Discovery — the
 /// pre-pivot marketplace screen — now reintroduced into navigation;
 /// Profile moved to a tappable avatar in each tab's own header instead of
-/// taking a 5th nav slot.
+/// taking a nav slot.
 class AgroHubShell extends ConsumerWidget {
   const AgroHubShell({super.key});
 
@@ -20,7 +19,6 @@ class AgroHubShell extends ConsumerWidget {
     HomeFeedScreen(),
     GroupsScreen(),
     EventsScreen(),
-    AgriAiScreen(),
     DiscoveryScreen(),
   ];
 
@@ -49,11 +47,6 @@ class AgroHubShell extends ConsumerWidget {
             icon: Icon(Icons.event_outlined),
             selectedIcon: Icon(Icons.event),
             label: 'Events',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.psychology_outlined),
-            selectedIcon: Icon(Icons.psychology),
-            label: 'Agri-AI',
           ),
           NavigationDestination(
             icon: Icon(Icons.storefront_outlined),

@@ -4,26 +4,23 @@ import '../../../theme/app_colors.dart';
 import '../../../widgets/notification_bell_button.dart';
 import '../../../widgets/user_avatar.dart';
 
-/// The Home tab's green hero header: avatar + a truthful role eyebrow (the
-/// user's own growing setup, not an invented title), the "Agro Hub" wordmark,
-/// and a time-of-day greeting. Search has no backend yet, so it's wired as
-/// a "coming soon" tap; notifications opens the real inbox.
+/// The Home tab's green hero header: avatar, the "Shobuj" name once, and
+/// the notifications bell; then a time-of-day greeting with a line about
+/// the user ("Balcony grower · Luton") — or the slogan when we know
+/// neither. Logging out lives on the Profile page, not here, so it can't be
+/// hit by accident next to the bell.
 class HomeHeroHeader extends StatelessWidget {
   const HomeHeroHeader({
     super.key,
     required this.userName,
     this.avatarUrl,
-    this.roleLabel,
     required this.onAvatarTap,
-    required this.onSearchTap,
     required this.onNotificationsTap,
   });
 
   final String userName;
   final String? avatarUrl;
-  final String? roleLabel;
   final VoidCallback onAvatarTap;
-  final VoidCallback onSearchTap;
   final VoidCallback onNotificationsTap;
 
   String get _greeting {
@@ -69,40 +66,20 @@ class HomeHeroHeader extends StatelessWidget {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (roleLabel != null)
-                          Text(
-                            roleLabel!.toUpperCase(),
-                            style: const TextStyle(
-                              color: AppColors.mint,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.6,
-                            ),
-                          ),
-                        Text(
-                          'Agro Hub',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                      ],
+                    child: Text(
+                      'Shobuj',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    onPressed: onSearchTap,
-                    icon: const Icon(Icons.search, color: Colors.white),
                   ),
                   NotificationBellButton(onTap: onNotificationsTap),
                 ],
               ),
               const SizedBox(height: 12),
               Text(
-                '$_greeting, $_firstName!',
+                '$_greeting, $_firstName',
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.w700,
@@ -110,10 +87,10 @@ class HomeHeroHeader extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                "Here's what's growing in your community today.",
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(color: AppColors.textOnDarkMuted),
+                'Grow. Share. Sustain.',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: AppColors.textOnDarkMuted,
+                ),
               ),
             ],
           ),

@@ -2,8 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 
-import '../models/agri_ai_config.dart';
-import '../models/ai_conversation.dart';
+import 'social_sign_in_service.dart';
 import '../models/app_notification.dart';
 import '../models/app_user.dart';
 import '../models/comment.dart';
@@ -11,6 +10,8 @@ import '../models/enums.dart';
 import '../models/event.dart';
 import '../models/event_category.dart';
 import '../models/event_enums.dart';
+import '../models/event_review.dart';
+import '../models/feed_marketplace.dart';
 import '../models/group.dart';
 import '../models/group_category.dart';
 import '../models/group_join_request.dart';
@@ -18,13 +19,16 @@ import '../models/group_member.dart';
 import '../models/group_message.dart';
 import '../models/listing.dart';
 import '../models/listing_category.dart';
+import '../models/listing_review.dart';
+import '../models/message_reaction.dart';
 import '../models/paginated_response.dart';
 import '../models/post.dart';
-import '../models/post_category.dart';
 import '../models/report.dart';
-import '../models/subscription_status.dart';
+import '../models/search_results.dart';
+import '../models/sowing_guide_month.dart';
 import '../models/swap_message.dart';
 import '../models/swap_offer.dart';
+import '../models/uk_address.dart';
 import 'api_exception.dart';
 
 /// The result of a successful register/login call.
@@ -33,6 +37,26 @@ class AuthResult {
 
   final AppUser user;
   final String token;
+}
+
+/// The answer to "Sign in with Google / Apple" (POST /auth/social).
+sealed class SocialLoginResult {
+  const SocialLoginResult();
+}
+
+class SocialSignedIn extends SocialLoginResult {
+  const SocialSignedIn(this.auth, {required this.isNewUser});
+
+  final AuthResult auth;
+  final bool isNewUser;
+}
+
+/// A new person: the app collects the address, then calls again.
+class SocialNeedsSignup extends SocialLoginResult {
+  const SocialNeedsSignup({required this.email, this.name});
+
+  final String email;
+  final String? name;
 }
 
 /// Thin wrapper around the Laravel API. Every method throws [ApiException] on
@@ -52,6 +76,8 @@ class ApiClient {
     String? locationLabel,
     String? experienceLevel,
     String? growingSetup,
+    List<String> growingInterests = const [],
+    UkAddress? address,
   }) {
     return _post(
       '/auth/register',
@@ -65,8 +91,44 @@ class ApiClient {
         'location_label': ?locationLabel,
         'experience_level': ?experienceLevel,
         'growing_setup': ?growingSetup,
+        if (growingInterests.isNotEmpty) 'growing_interests': growingInterests,
+        ...?address?.toFields(),
       },
     ).then(_parseAuthResult);
+  }
+
+  /// Every address at [postcode] (Royal Mail's list, via the backend), for
+  /// "type your postcode, pick your address". Throws an [ApiException]:
+  /// 404 for a postcode that doesn't exist, 503 when lookups aren't set up.
+  Future<List<AddressSuggestion>> postcodeAddresses(String postcode) async {
+    final response = await _get(
+      '/addresses/postcode',
+      queryParameters: {'postcode': postcode},
+    );
+    return ((response.data as Map<String, dynamic>)['data'] as List<dynamic>)
+        .map((s) => AddressSuggestion.fromJson(s as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Emails a 6-digit reset code if an account exists for [email].
+  Future<void> sendPasswordResetCode(String email) async {
+    await _post('/auth/forgot-password', data: {'email': email});
+  }
+
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String password,
+  }) async {
+    await _post(
+      '/auth/reset-password',
+      data: {
+        'email': email,
+        'code': code,
+        'password': password,
+        'password_confirmation': password,
+      },
+    );
   }
 
   Future<AuthResult> login({required String email, required String password}) {
@@ -76,15 +138,79 @@ class ApiClient {
     ).then(_parseAuthResult);
   }
 
+  /// GET /api/v1/config/social — which sign-in buttons the admin panel has
+  /// switched on, and Google's public client ids.
+  Future<SocialConfig> socialConfig() async {
+    final response = await _get('/config/social');
+    return SocialConfig.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// POST /api/v1/auth/social. With only the token it signs an existing
+  /// account in (or says [SocialNeedsSignup]); with the address too, it
+  /// creates the account.
+  Future<SocialLoginResult> socialLogin({
+    required String provider,
+    required String idToken,
+    String? nonce,
+    String? name,
+    double? latitude,
+    double? longitude,
+    String? locationLabel,
+    UkAddress? address,
+  }) async {
+    final response = await _post(
+      '/auth/social',
+      data: {
+        'provider': provider,
+        'id_token': idToken,
+        'nonce': ?nonce,
+        'name': ?name,
+        'latitude': ?latitude,
+        'longitude': ?longitude,
+        'location_label': ?locationLabel,
+        ...?address?.toFields(),
+      },
+    );
+    final body = response.data as Map<String, dynamic>;
+    if (body['needs_signup'] == true) {
+      return SocialNeedsSignup(
+        email: body['email'] as String,
+        name: body['name'] as String?,
+      );
+    }
+    return SocialSignedIn(
+      _parseAuthResult(response),
+      isNewUser: body['is_new_user'] as bool? ?? false,
+    );
+  }
+
   Future<void> logout() async {
     await _post('/auth/logout');
   }
 
   /// DELETE /api/v1/auth/me — permanently deletes the signed-in account and
-  /// its data (App Store Guideline 5.1.1(v)). Requires the current password;
-  /// a wrong one comes back as a 422 [ApiException] on the `password` field.
-  Future<void> deleteAccount({required String password}) async {
-    await _delete('/auth/me', data: {'password': password});
+  /// its data (App Store Guideline 5.1.1(v)). Confirmed with the password,
+  /// or — for a Google/Apple account without one — a fresh token from that
+  /// provider. A wrong one is a 422 [ApiException].
+  Future<void> deleteAccount({
+    String? password,
+    String? provider,
+    String? idToken,
+    String? nonce,
+    String? authorizationCode,
+  }) async {
+    await _delete(
+      '/auth/me',
+      data: {
+        'password': ?password,
+        'provider': ?provider,
+        'id_token': ?idToken,
+        'nonce': ?nonce,
+        'authorization_code': ?authorizationCode,
+      },
+    );
   }
 
   /// POST /api/v1/reports — files a report against content or a user.
@@ -155,9 +281,15 @@ class ApiClient {
     GrowingSetup? growingSetup,
     File? avatar,
     File? coverPhoto,
+    UkAddress? address,
+    double? latitude,
+    double? longitude,
   }) async {
     final formData = FormData.fromMap({
       '_method': 'PATCH',
+      ...?address?.toFields(),
+      'latitude': ?latitude,
+      'longitude': ?longitude,
       'name': ?name,
       'username': ?username,
       'bio': ?bio,
@@ -172,7 +304,7 @@ class ApiClient {
           : null),
       'experience_level': ?experienceLevel?.value,
       'growing_setup': ?growingSetup?.value,
-      if (growingInterests != null) 'growing_interests': growingInterests,
+      'growing_interests': ?growingInterests,
       'avatar': ?(avatar != null
           ? await MultipartFile.fromFile(avatar.path)
           : null),
@@ -205,7 +337,7 @@ class ApiClient {
         'longitude': longitude,
         'radius_km': radiusKm,
         'page': page,
-        if (category != null) 'category': category,
+        'category': ?category,
         if (transactionType != null) 'transaction_type': transactionType.value,
         if (search != null && search.trim().isNotEmpty) 'q': search.trim(),
         'sort': ?sort,
@@ -228,6 +360,8 @@ class ApiClient {
     required String listingType,
     required TransactionType transactionType,
     double? price,
+    int? quantity,
+    String? contact,
     String? lookingFor,
     String? handoverNote,
     double? latitude,
@@ -242,6 +376,8 @@ class ApiClient {
       'listing_type': listingType,
       'transaction_type': transactionType.value,
       'price': ?price,
+      'quantity': ?quantity,
+      'contact': ?contact,
       'looking_for': ?lookingFor,
       'handover_note': ?handoverNote,
       'latitude': ?latitude,
@@ -256,6 +392,60 @@ class ApiClient {
     }, ListFormat.multiCompatible);
 
     final response = await _post('/listings', data: formData);
+    return Listing.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// PATCH /api/v1/listings/{listingId} — the seller editing their own
+  /// listing. Sent as a POST with `_method=PATCH` because PHP only reads
+  /// uploaded files from a POST body. Only the fields given are changed;
+  /// [newPhotos] are added and [removePhotoIds] are dropped.
+  Future<Listing> updateListing(
+    int listingId, {
+    String? title,
+    String? description,
+    String? listingType,
+    double? price,
+    int? quantity,
+    String? contact,
+    String? lookingFor,
+    ListingStatus? status,
+    List<File> newPhotos = const [],
+    List<int> removePhotoIds = const [],
+  }) async {
+    final formData = FormData.fromMap({
+      '_method': 'PATCH',
+      'title': ?title,
+      'description': ?description,
+      'listing_type': ?listingType,
+      'price': ?price,
+      'quantity': ?quantity,
+      'contact': ?contact,
+      'looking_for': ?lookingFor,
+      'status': ?status?.value,
+      'photos': [
+        for (final photo in newPhotos) await MultipartFile.fromFile(photo.path),
+      ],
+      'remove_photo_ids': removePhotoIds,
+    }, ListFormat.multiCompatible);
+
+    final response = await _post('/listings/$listingId', data: formData);
+    return Listing.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// DELETE /api/v1/listings/{listingId} — removes it from the marketplace
+  /// and closes any deals still open on it.
+  Future<void> deleteListing(int listingId) async {
+    await _delete('/listings/$listingId');
+  }
+
+  /// GET /api/v1/listings/{listingId} — one listing, e.g. to open it from a
+  /// notification.
+  Future<Listing> listing(int listingId) async {
+    final response = await _get('/listings/$listingId');
     return Listing.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
     );
@@ -288,6 +478,44 @@ class ApiClient {
       response.data as Map<String, dynamic>,
       Listing.fromJson,
     );
+  }
+
+  /// GET /api/v1/listings/{listingId}/reviews — star rating + comment,
+  /// newest first.
+  Future<PaginatedResponse<ListingReview>> listingReviews(
+    int listingId, {
+    int page = 1,
+  }) async {
+    final response = await _get(
+      '/listings/$listingId/reviews',
+      queryParameters: {'page': page},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      ListingReview.fromJson,
+    );
+  }
+
+  /// POST /api/v1/listings/{listingId}/reviews — idempotent: posting again
+  /// replaces the caller's existing rating/comment for this listing rather
+  /// than adding a second review.
+  Future<ListingReview> submitListingReview(
+    int listingId, {
+    required int rating,
+    String? comment,
+  }) async {
+    final response = await _post(
+      '/listings/$listingId/reviews',
+      data: {'rating': rating, 'comment': ?comment},
+    );
+    return ListingReview.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// DELETE /api/v1/listings/{listingId}/reviews/{reviewId}
+  Future<void> deleteListingReview(int listingId, int reviewId) async {
+    await _delete('/listings/$listingId/reviews/$reviewId');
   }
 
   /// GET /api/v1/swap-offers/{swapOfferId} — used for notification-tap
@@ -350,20 +578,40 @@ class ApiClient {
   Future<SwapMessage> sendSwapOfferMessage(
     int swapOfferId, {
     String? body,
-    File? image,
+    List<File> images = const [],
+    int? replyToId,
   }) async {
     final response = await _post(
       '/swap-offers/$swapOfferId/messages',
       data: FormData.fromMap({
         'body': ?body,
-        'image': ?(image != null
-            ? await MultipartFile.fromFile(image.path)
-            : null),
-      }),
+        'reply_to_id': ?replyToId,
+        // Up to 10 photos (the backend's MAX_IMAGES) as images[].
+        if (images.isNotEmpty)
+          'images': [
+            for (final image in images)
+              await MultipartFile.fromFile(image.path),
+          ],
+      }, ListFormat.multiCompatible),
     );
     return SwapMessage.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
     );
+  }
+
+  /// PUT (or, with a null [emoji], DELETE)
+  /// /api/v1/swap-offers/{swapOfferId}/messages/{messageId}/reaction — sets
+  /// or clears the caller's reaction; returns the message's new reactions.
+  Future<List<MessageReaction>> setSwapOfferMessageReaction(
+    int swapOfferId,
+    int messageId,
+    String? emoji,
+  ) async {
+    final path = '/swap-offers/$swapOfferId/messages/$messageId/reaction';
+    final response = emoji == null
+        ? await _delete(path)
+        : await _put(path, data: {'emoji': emoji});
+    return _reactionsFrom(response);
   }
 
   /// PATCH /api/v1/swap-offers/{swapOfferId}/status — Accept/Decline/Cancel/
@@ -371,11 +619,12 @@ class ApiClient {
   /// the caller's side of the negotiation.
   Future<SwapOffer> updateSwapOfferStatus(
     int swapOfferId,
-    SwapOfferStatus status,
-  ) async {
+    SwapOfferStatus status, {
+    int? quantitySold,
+  }) async {
     final response = await _patch(
       '/swap-offers/$swapOfferId/status',
-      data: {'status': status.value},
+      data: {'status': status.value, 'quantity_sold': ?quantitySold},
     );
     return SwapOffer.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
@@ -407,21 +656,59 @@ class ApiClient {
     );
   }
 
-  /// GET /api/v1/feed — the general Home Feed (posts with no group).
-  Future<PaginatedResponse<Post>> homeFeed({
-    String? search,
-    int? authorId,
-    String? category,
+  /// POST /api/v1/users/{userId}/follow — idempotent. Returns the followed
+  /// user with refreshed follow counts and is_following=true.
+  Future<AppUser> followUser(int userId) async {
+    final response = await _post('/users/$userId/follow');
+    return AppUser.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// DELETE /api/v1/users/{userId}/follow
+  Future<AppUser> unfollowUser(int userId) async {
+    final response = await _delete('/users/$userId/follow');
+    return AppUser.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// GET /api/v1/users/{userId}/followers
+  Future<PaginatedResponse<AppUser>> userFollowers(
+    int userId, {
     int page = 1,
   }) async {
     final response = await _get(
-      '/feed',
-      queryParameters: {
-        'page': page,
-        'search': ?search,
-        'author_id': ?authorId,
-        'category': ?category,
-      },
+      '/users/$userId/followers',
+      queryParameters: {'page': page},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      AppUser.fromJson,
+    );
+  }
+
+  /// GET /api/v1/users/{userId}/following
+  Future<PaginatedResponse<AppUser>> userFollowing(
+    int userId, {
+    int page = 1,
+  }) async {
+    final response = await _get(
+      '/users/$userId/following',
+      queryParameters: {'page': page},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      AppUser.fromJson,
+    );
+  }
+
+  /// GET /api/v1/users/{userId}/posts — a profile's posts ("My Posts"):
+  /// their posts in groups the viewer can see. Posts only live in groups.
+  Future<PaginatedResponse<Post>> userPosts(int userId, {int page = 1}) async {
+    final response = await _get(
+      '/users/$userId/posts',
+      queryParameters: {'page': page},
     );
     return PaginatedResponse.fromJson(
       response.data as Map<String, dynamic>,
@@ -439,17 +726,57 @@ class ApiClient {
     );
   }
 
+  /// GET /api/v1/feed/marketplace — the nearby and followed-grower listings
+  /// mixed into the Home feed.
+  Future<FeedMarketplace> feedMarketplace() async {
+    final response = await _get('/feed/marketplace');
+    return FeedMarketplace.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// GET /api/v1/search — Home's search across items, members and groups.
+  /// Also saves the term to the user's search history.
+  Future<SearchResults> search(String term) async {
+    final response = await _get('/search', queryParameters: {'q': term});
+    return SearchResults.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// GET /api/v1/search/suggest — suggestions while typing. Not saved to
+  /// the search history.
+  Future<SearchSuggestions> searchSuggestions(String term) async {
+    final response = await _get(
+      '/search/suggest',
+      queryParameters: {'q': term},
+    );
+    return SearchSuggestions.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// GET /api/v1/search/history — recent search terms, newest first.
+  Future<List<String>> searchHistory() async {
+    final response = await _get('/search/history');
+    return ((response.data as Map<String, dynamic>)['data'] as List<dynamic>)
+        .cast<String>();
+  }
+
+  /// DELETE /api/v1/search/history
+  Future<void> clearSearchHistory() async {
+    await _delete('/search/history');
+  }
+
   /// POST /api/v1/posts — omitting groupId posts to the general Home Feed.
   Future<Post> createPost({
     required String body,
-    int? groupId,
-    String? category,
+    required int groupId,
     File? image,
   }) async {
     final formData = FormData.fromMap({
       'body': body,
-      'group_id': ?groupId,
-      'category': ?category,
+      'group_id': groupId,
       'image': ?(image != null
           ? await MultipartFile.fromFile(image.path)
           : null),
@@ -474,7 +801,7 @@ class ApiClient {
     await _delete('/posts/$postId');
   }
 
-  /// PATCH /api/v1/posts/{postId} — only the author's own body/category/
+  /// PATCH /api/v1/posts/{postId} — only the author's own body/
   /// image are editable; sent as a spoofed POST + `_method: PATCH` the same
   /// way updateGroup()/updateProfile() are, since a real multipart PATCH
   /// doesn't populate PHP's $_FILES. removeImage clears an existing photo
@@ -482,7 +809,6 @@ class ApiClient {
   Future<Post> updatePost(
     int postId, {
     String? body,
-    String? category,
     File? image,
     bool removeImage = false,
   }) async {
@@ -491,7 +817,6 @@ class ApiClient {
       data: FormData.fromMap({
         '_method': 'PATCH',
         'body': ?body,
-        'category': ?category,
         'image': ?(image != null
             ? await MultipartFile.fromFile(image.path)
             : null),
@@ -566,16 +891,14 @@ class ApiClient {
     await _delete('/comments/$commentId');
   }
 
-  /// GET /api/v1/post-categories — the admin-managed list backing the Home
-  /// tab's Recent/Disease Alerts/Harvests chips and the "new post" composer,
-  /// not paginated (always a short reference list, not user-generated
-  /// content).
-  Future<List<PostCategory>> postCategories() async {
-    final response = await _get('/post-categories');
+  /// GET /api/v1/sowing-guide — all 12 months of the admin-managed sowing
+  /// guide behind "What can you grow now?", in month order.
+  Future<List<SowingGuideMonth>> sowingGuide() async {
+    final response = await _get('/sowing-guide');
     final data =
         (response.data as Map<String, dynamic>)['data'] as List<dynamic>;
     return data
-        .map((item) => PostCategory.fromJson(item as Map<String, dynamic>))
+        .map((item) => SowingGuideMonth.fromJson(item as Map<String, dynamic>))
         .toList(growable: false);
   }
 
@@ -604,9 +927,12 @@ class ApiClient {
   }
 
   /// GET /api/v1/groups
+  /// [membership] is 'mine' (groups the user is in), 'others' (the rest),
+  /// or null for both.
   Future<PaginatedResponse<Group>> groups({
     String? search,
     String? category,
+    String? membership,
     int page = 1,
   }) async {
     final response = await _get(
@@ -615,6 +941,7 @@ class ApiClient {
         'page': page,
         if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
         'category': ?category,
+        'membership': ?membership,
       },
     );
     return PaginatedResponse.fromJson(
@@ -658,6 +985,31 @@ class ApiClient {
     final response = await _post('/groups', data: formData);
     return Group.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// GET /api/v1/users/suggested — growers to follow while onboarding,
+  /// nearest to the caller's registered location first.
+  Future<List<AppUser>> suggestedUsers() async {
+    final response = await _get('/users/suggested');
+    return [
+      for (final json
+          in ((response.data as Map<String, dynamic>)['data'] as List))
+        AppUser.fromJson(json as Map<String, dynamic>),
+    ];
+  }
+
+  /// GET /api/v1/groups/suggested — public groups to join while onboarding,
+  /// ones for the caller's city first (see GroupController::suggested()).
+  Future<SuggestedGroups> suggestedGroups() async {
+    final response = await _get('/groups/suggested');
+    final body = response.data as Map<String, dynamic>;
+    return SuggestedGroups(
+      city: (body['meta'] as Map<String, dynamic>?)?['city'] as String?,
+      groups: [
+        for (final json in body['data'] as List)
+          Group.fromJson(json as Map<String, dynamic>),
+      ],
     );
   }
 
@@ -805,64 +1157,46 @@ class ApiClient {
   Future<GroupMessage> sendGroupMessage(
     int groupId, {
     String? body,
-    File? image,
+    List<File> images = const [],
+    int? replyToId,
   }) async {
     final response = await _post(
       '/groups/$groupId/messages',
       data: FormData.fromMap({
         'body': ?body,
-        'image': ?(image != null
-            ? await MultipartFile.fromFile(image.path)
-            : null),
-      }),
+        'reply_to_id': ?replyToId,
+        // Up to 10 photos (the backend's MAX_IMAGES) as images[].
+        if (images.isNotEmpty)
+          'images': [
+            for (final image in images)
+              await MultipartFile.fromFile(image.path),
+          ],
+      }, ListFormat.multiCompatible),
     );
     return GroupMessage.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
     );
   }
 
-  /// GET /api/v1/ai/conversations — history list; each entry has no
-  /// `messages` (see AiConversation.messages doc).
-  Future<PaginatedResponse<AiConversation>> aiConversations({
-    int page = 1,
-  }) async {
-    final response = await _get(
-      '/ai/conversations',
-      queryParameters: {'page': page},
-    );
-    return PaginatedResponse.fromJson(
-      response.data as Map<String, dynamic>,
-      AiConversation.fromJson,
-    );
+  /// PUT (or, with a null [emoji], DELETE)
+  /// /api/v1/groups/{groupId}/messages/{messageId}/reaction — sets or clears
+  /// the caller's reaction; returns the message's new reactions.
+  Future<List<MessageReaction>> setGroupMessageReaction(
+    int groupId,
+    int messageId,
+    String? emoji,
+  ) async {
+    final path = '/groups/$groupId/messages/$messageId/reaction';
+    final response = emoji == null
+        ? await _delete(path)
+        : await _put(path, data: {'emoji': emoji});
+    return _reactionsFrom(response);
   }
 
-  /// GET /api/v1/ai/conversations/{conversationId} — full message history.
-  Future<AiConversation> aiConversation(int conversationId) async {
-    final response = await _get('/ai/conversations/$conversationId');
-    return AiConversation.fromJson(
-      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
-    );
-  }
-
-  /// POST /api/v1/ai/messages — omitting conversationId starts a new
-  /// conversation. Returns the full conversation (including the just-sent
-  /// user message and Gemini's reply).
-  Future<AiConversation> sendAiMessage({
-    int? conversationId,
-    String? body,
-    File? photo,
-  }) async {
-    final formData = FormData.fromMap({
-      'conversation_id': ?conversationId,
-      'body': ?body,
-      'photo': ?(photo != null
-          ? await MultipartFile.fromFile(photo.path)
-          : null),
-    });
-
-    final response = await _post('/ai/messages', data: formData);
-    return AiConversation.fromJson(
-      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+  List<MessageReaction> _reactionsFrom(Response<dynamic> response) {
+    final data = (response.data as Map<String, dynamic>)['data'];
+    return MessageReaction.listFromJson(
+      (data as Map<String, dynamic>)['reactions'],
     );
   }
 
@@ -875,6 +1209,9 @@ class ApiClient {
     int? groupId,
     String? month,
     String? category,
+    bool forYou = false,
+    String? search,
+    bool going = false,
     int page = 1,
   }) async {
     final response = await _get(
@@ -884,6 +1221,9 @@ class ApiClient {
         'group_id': ?groupId,
         'month': ?month,
         'category': ?category,
+        if (forYou) 'for_you': 1,
+        if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+        if (going) 'going': 1,
       },
     );
     return PaginatedResponse.fromJson(
@@ -938,27 +1278,187 @@ class ApiClient {
     required DateTime startsAt,
     DateTime? endsAt,
     int? capacity,
+    double? registrationFee,
+    List<DateTime> proposedDates = const [],
     required EventStatus status,
   }) async {
-    final formData = FormData.fromMap({
-      'group_id': ?groupId,
-      'title': title,
-      'description': ?description,
-      'format': format.value,
-      'category': ?category,
-      'cover_image': ?(coverImage != null
-          ? await MultipartFile.fromFile(coverImage.path)
-          : null),
-      'location': ?location,
-      'starts_at': startsAt.toIso8601String(),
-      'ends_at': ?endsAt?.toIso8601String(),
-      'capacity': ?capacity,
-      'status': status.value,
-    });
+    final formData = await _eventFormData(
+      groupId: groupId,
+      title: title,
+      description: description,
+      format: format,
+      category: category,
+      coverImage: coverImage,
+      location: location,
+      startsAt: startsAt,
+      endsAt: endsAt,
+      capacity: capacity,
+      registrationFee: registrationFee,
+      proposedDates: proposedDates,
+      status: status,
+    );
 
     final response = await _post('/events', data: formData);
     return Event.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// PATCH /api/v1/events/{eventId} — editing an event (a draft, or one
+  /// that's already published).
+  /// Sent as a POST with `_method=PATCH`: PHP doesn't parse multipart
+  /// bodies (the cover image) on a real PATCH.
+  Future<Event> updateEvent(
+    int eventId, {
+    required String title,
+    String? description,
+    required EventFormat format,
+    String? category,
+    File? coverImage,
+    String? location,
+    required DateTime startsAt,
+    DateTime? endsAt,
+    int? capacity,
+    double? registrationFee,
+    List<DateTime> proposedDates = const [],
+    required EventStatus status,
+  }) async {
+    final formData = await _eventFormData(
+      title: title,
+      description: description,
+      format: format,
+      category: category,
+      coverImage: coverImage,
+      location: location,
+      startsAt: startsAt,
+      endsAt: endsAt,
+      capacity: capacity,
+      registrationFee: registrationFee,
+      proposedDates: proposedDates,
+      status: status,
+      // Sent even when empty so a cleared field is cleared on the server.
+      sendEmpty: true,
+    );
+    formData.fields.add(const MapEntry('_method', 'PATCH'));
+
+    final response = await _post('/events/$eventId', data: formData);
+    return Event.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  Future<FormData> _eventFormData({
+    int? groupId,
+    required String title,
+    String? description,
+    required EventFormat format,
+    String? category,
+    File? coverImage,
+    String? location,
+    required DateTime startsAt,
+    DateTime? endsAt,
+    int? capacity,
+    double? registrationFee,
+    List<DateTime> proposedDates = const [],
+    required EventStatus status,
+    bool sendEmpty = false,
+  }) async {
+    final formData = FormData.fromMap(
+      {
+        'group_id': ?groupId,
+        'title': title,
+        'description': description ?? (sendEmpty ? '' : null),
+        'format': format.value,
+        'category': category ?? (sendEmpty ? '' : null),
+        'cover_image': ?(coverImage != null
+            ? await MultipartFile.fromFile(coverImage.path)
+            : null),
+        'location': location ?? (sendEmpty ? '' : null),
+        'starts_at': startsAt.toIso8601String(),
+        'ends_at': endsAt?.toIso8601String() ?? (sendEmpty ? '' : null),
+        'capacity': capacity ?? (sendEmpty ? '' : null),
+        'registration_fee': registrationFee ?? (sendEmpty ? '' : null),
+        'status': status.value,
+      }..removeWhere((_, value) => value == null),
+    );
+    for (final date in proposedDates) {
+      formData.fields.add(
+        MapEntry('proposed_dates[]', date.toUtc().toIso8601String()),
+      );
+    }
+    if (sendEmpty && proposedDates.isEmpty) {
+      formData.fields.add(const MapEntry('proposed_dates', ''));
+    }
+    return formData;
+  }
+
+  /// GET /api/v1/events/mine — the caller's own hosted events;
+  /// status=draft is the "My drafts" list.
+  Future<PaginatedResponse<Event>> myEvents({
+    EventStatus? status,
+    int page = 1,
+  }) async {
+    final response = await _get(
+      '/events/mine',
+      queryParameters: {'page': page, 'status': ?status?.value},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      Event.fromJson,
+    );
+  }
+
+  /// GET /api/v1/events/{eventId}/chat — the event's conversation, a
+  /// hidden group chat for the host and "going" attendees only (403 for
+  /// anyone else). Opened with the ordinary group chat screen.
+  Future<Group> eventChat(int eventId) async {
+    final response = await _get('/events/$eventId/chat');
+    return Group.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// GET /api/v1/events/{eventId}/reviews — newest first.
+  Future<PaginatedResponse<EventReview>> eventReviews(
+    int eventId, {
+    int page = 1,
+  }) async {
+    final response = await _get(
+      '/events/$eventId/reviews',
+      queryParameters: {'page': page},
+    );
+    return PaginatedResponse.fromJson(
+      response.data as Map<String, dynamic>,
+      EventReview.fromJson,
+    );
+  }
+
+  /// POST /api/v1/events/{eventId}/reviews — needs a rating, a comment, or
+  /// both.
+  Future<EventReview> reviewEvent(
+    int eventId, {
+    int? rating,
+    String? body,
+  }) async {
+    final response = await _post(
+      '/events/$eventId/reviews',
+      data: {'rating': ?rating, 'body': ?body},
+    );
+    return EventReview.fromJson(
+      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
+    );
+  }
+
+  /// DELETE /api/v1/events/{eventId}/reviews/{reviewId}
+  Future<void> deleteEventReview(int eventId, int reviewId) async {
+    await _delete('/events/$eventId/reviews/$reviewId');
+  }
+
+  /// POST /api/v1/group-requests — "Request a group", reviewed by admins.
+  Future<void> requestGroup({required String name, String? description}) async {
+    await _post(
+      '/group-requests',
+      data: {'name': name, 'description': ?description},
     );
   }
 
@@ -990,57 +1490,6 @@ class ApiClient {
   Future<Event> unsaveEvent(int eventId) async {
     final response = await _delete('/events/$eventId/save');
     return Event.fromJson(
-      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
-    );
-  }
-
-  /// GET /api/v1/config/stripe-key — public, no auth required. Fetched at
-  /// runtime rather than compiled into the app so an admin rotating the key
-  /// or changing the Agri-AI Premium price via the Settings page takes
-  /// effect immediately, no new APK needed.
-  Future<AgriAiConfig> agriAiConfig() async {
-    final response = await _get('/config/stripe-key');
-    return AgriAiConfig.fromJson(response.data as Map<String, dynamic>);
-  }
-
-  /// GET /api/v1/subscriptions/me
-  Future<SubscriptionStatus> subscriptionStatus() async {
-    final response = await _get('/subscriptions/me');
-    return SubscriptionStatus.fromJson(
-      (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
-    );
-  }
-
-  /// POST /api/v1/subscriptions — `paymentMethodId` comes from
-  /// flutter_stripe's on-device card tokenization; card details never pass
-  /// through this server. May come back as a 202 "requires 3-D Secure"
-  /// response instead of an immediate 201 — see [SubscribeResult].
-  Future<SubscribeResult> createSubscription({
-    required String plan,
-    required String paymentMethodId,
-  }) async {
-    final response = await _post(
-      '/subscriptions',
-      data: {'plan': plan, 'payment_method': paymentMethodId},
-    );
-    final body = response.data as Map<String, dynamic>;
-
-    if (response.statusCode == 202) {
-      return SubscribeResult.requiresAction(
-        body['payment_intent_client_secret'] as String,
-      );
-    }
-
-    return SubscribeResult.success(
-      SubscriptionStatus.fromJson(body['data'] as Map<String, dynamic>),
-    );
-  }
-
-  /// DELETE /api/v1/subscriptions/me — cancels at the end of the current
-  /// paid/trial period; access continues until then.
-  Future<SubscriptionStatus> cancelSubscription() async {
-    final response = await _delete('/subscriptions/me');
-    return SubscriptionStatus.fromJson(
       (response.data as Map<String, dynamic>)['data'] as Map<String, dynamic>,
     );
   }
@@ -1127,6 +1576,14 @@ class ApiClient {
   Future<Response<dynamic>> _delete(String path, {Object? data}) async {
     try {
       return await _dio.delete(path, data: data);
+    } on DioException catch (e) {
+      throw ApiException.fromDioException(e);
+    }
+  }
+
+  Future<Response<dynamic>> _put(String path, {Object? data}) async {
+    try {
+      return await _dio.put(path, data: data);
     } on DioException catch (e) {
       throw ApiException.fromDioException(e);
     }

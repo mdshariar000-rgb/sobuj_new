@@ -8,14 +8,19 @@ import '../../services/api_exception.dart';
 import '../../theme/app_colors.dart';
 import 'listing_detail_screen.dart';
 import 'swap_offer_thread_screen.dart';
-import 'widgets/listing_card.dart';
+import 'discovery_screen.dart';
+import '../../widgets/shimmer.dart';
 
 /// Real "Favorites" — every listing the user has tapped the heart icon on
 /// (GET /listings/saved), not a client-side-only bookmark.
 class FavoritesScreen extends ConsumerWidget {
   const FavoritesScreen({super.key});
 
-  Future<void> _unsave(BuildContext context, WidgetRef ref, Listing listing) async {
+  Future<void> _unsave(
+    BuildContext context,
+    WidgetRef ref,
+    Listing listing,
+  ) async {
     try {
       await ref.read(savedListingsProvider.notifier).unsave(listing);
     } on ApiException catch (e) {
@@ -27,7 +32,11 @@ class FavoritesScreen extends ConsumerWidget {
     }
   }
 
-  Future<void> _makeOffer(BuildContext context, WidgetRef ref, Listing listing) async {
+  Future<void> _makeOffer(
+    BuildContext context,
+    WidgetRef ref,
+    Listing listing,
+  ) async {
     try {
       final apiClient = ref.read(apiClientProvider);
       final offer = await apiClient.createSwapOffer(listing.id);
@@ -55,7 +64,7 @@ class FavoritesScreen extends ConsumerWidget {
       backgroundColor: AppColors.surface,
       appBar: AppBar(title: const Text('Favorites')),
       body: savedAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const ShimmerListingGrid(rows: 3),
         error: (error, _) => Center(child: Text('$error')),
         data: (listings) {
           if (listings.isEmpty) {
@@ -74,22 +83,23 @@ class FavoritesScreen extends ConsumerWidget {
 
           return RefreshIndicator(
             onRefresh: () => ref.read(savedListingsProvider.notifier).refresh(),
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: listings.length,
-              itemBuilder: (context, index) {
-                final listing = listings[index];
-                return ListingCard(
-                  listing: listing,
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ListingDetailScreen(listing: listing),
+            child: CustomScrollView(
+              slivers: [
+                SliverPadding(
+                  padding: const EdgeInsets.all(16),
+                  sliver: ListingGrid(
+                    listings: listings,
+                    onTap: (listing) => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ListingDetailScreen(listing: listing),
+                      ),
                     ),
+                    onChat: (listing) =>
+                        () => _makeOffer(context, ref, listing),
+                    onToggleSave: (listing) => _unsave(context, ref, listing),
                   ),
-                  onCta: () => _makeOffer(context, ref, listing),
-                  onToggleSave: () => _unsave(context, ref, listing),
-                );
-              },
+                ),
+              ],
             ),
           );
         },

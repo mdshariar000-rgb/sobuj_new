@@ -3,7 +3,9 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/app_user.dart';
+import '../models/uk_address.dart';
 import '../models/enums.dart';
+import '../services/social_sign_in_service.dart';
 import '../services/api_client.dart';
 import '../services/biometric_service.dart';
 import '../services/push_notification_service.dart';
@@ -59,6 +61,56 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
     _pushService.requestPermissionAndRegister(_apiClient);
   }
 
+  /// "Sign in with Google / Apple". Signs an existing account in and
+  /// returns null — or returns [SocialNeedsSignup] for a new person, whose
+  /// address [completeSocialSignup] then sends.
+  Future<SocialNeedsSignup?> signInWithSocial(
+    SocialCredential credential,
+  ) async {
+    final result = await _apiClient.socialLogin(
+      provider: credential.provider.value,
+      idToken: credential.idToken,
+      nonce: credential.nonce,
+      name: credential.name,
+    );
+    switch (result) {
+      case SocialNeedsSignup():
+        return result;
+      case SocialSignedIn(:final auth):
+        await _signedIn(auth);
+        return null;
+    }
+  }
+
+  Future<void> completeSocialSignup({
+    required SocialCredential credential,
+    required String name,
+    required double latitude,
+    required double longitude,
+    String? locationLabel,
+    required UkAddress address,
+  }) async {
+    final result = await _apiClient.socialLogin(
+      provider: credential.provider.value,
+      idToken: credential.idToken,
+      nonce: credential.nonce,
+      name: name,
+      latitude: latitude,
+      longitude: longitude,
+      locationLabel: locationLabel,
+      address: address,
+    );
+    if (result case SocialSignedIn(:final auth)) {
+      await _signedIn(auth);
+    }
+  }
+
+  Future<void> _signedIn(AuthResult result) async {
+    await _secureStorage.saveToken(result.token);
+    state = AsyncValue.data(result.user);
+    _pushService.requestPermissionAndRegister(_apiClient);
+  }
+
   Future<void> register({
     required String name,
     required String email,
@@ -69,6 +121,8 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
     String? locationLabel,
     String? experienceLevel,
     String? growingSetup,
+    List<String> growingInterests = const [],
+    UkAddress? address,
   }) async {
     final result = await _apiClient.register(
       name: name,
@@ -80,6 +134,8 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
       locationLabel: locationLabel,
       experienceLevel: experienceLevel,
       growingSetup: growingSetup,
+      growingInterests: growingInterests,
+      address: address,
     );
     await _secureStorage.saveToken(result.token);
     state = AsyncValue.data(result.user);
@@ -107,8 +163,17 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
   /// No device-token unregister here: deleting the account cascades its
   /// device tokens away server-side, and that call would need a token that no
   /// longer exists.
-  Future<void> deleteAccount({required String password}) async {
-    await _apiClient.deleteAccount(password: password);
+  Future<void> deleteAccount({
+    String? password,
+    SocialCredential? confirmWith,
+  }) async {
+    await _apiClient.deleteAccount(
+      password: password,
+      provider: confirmWith?.provider.value,
+      idToken: confirmWith?.idToken,
+      nonce: confirmWith?.nonce,
+      authorizationCode: confirmWith?.authorizationCode,
+    );
     await _secureStorage.clearBiometricCredentials();
     await _secureStorage.clearToken();
     state = const AsyncValue.data(null);
@@ -130,6 +195,9 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
     GrowingSetup? growingSetup,
     File? avatar,
     File? coverPhoto,
+    UkAddress? address,
+    double? latitude,
+    double? longitude,
   }) async {
     final updated = await _apiClient.updateProfile(
       name: name,
@@ -143,6 +211,9 @@ class AuthController extends StateNotifier<AsyncValue<AppUser?>> {
       growingSetup: growingSetup,
       avatar: avatar,
       coverPhoto: coverPhoto,
+      address: address,
+      latitude: latitude,
+      longitude: longitude,
     );
     state = AsyncValue.data(updated);
   }

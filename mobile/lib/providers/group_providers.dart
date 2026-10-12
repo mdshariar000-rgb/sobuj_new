@@ -8,6 +8,8 @@ import '../models/group_category.dart';
 import '../models/group_join_request.dart';
 import '../models/group_member.dart';
 import '../models/group_message.dart';
+import '../models/message_reaction.dart';
+import '../models/message_reply.dart';
 import '../models/post.dart';
 import '../services/api_client.dart';
 import '../services/group_realtime_channel.dart';
@@ -17,12 +19,17 @@ import 'core_providers.dart';
 /// The admin-managed category list — both the Groups tab's filter chips and
 /// the "Create a Group" screen's category picker read from this single
 /// source of truth rather than each guessing at real values independently.
-final groupCategoriesProvider = FutureProvider.autoDispose<List<GroupCategory>>((
-  ref,
-) async {
-  final apiClient = ref.watch(apiClientProvider);
-  return apiClient.groupCategories();
-});
+final groupCategoriesProvider = FutureProvider.autoDispose<List<GroupCategory>>(
+  (ref) async {
+    final apiClient = ref.watch(apiClientProvider);
+    final categories = await apiClient.groupCategories();
+    // Admin-managed and rarely changes — keep it for the session once loaded,
+    // so the chips don't flash a spinner every time a screen opens. (A failed
+    // load isn't kept, so it retries next time.)
+    ref.keepAlive();
+    return categories;
+  },
+);
 
 @immutable
 class GroupsFilters {
@@ -35,7 +42,11 @@ class GroupsFilters {
   /// side approximation.
   final String? category;
 
-  GroupsFilters copyWith({String? search, String? category, bool clearCategory = false}) {
+  GroupsFilters copyWith({
+    String? search,
+    String? category,
+    bool clearCategory = false,
+  }) {
     return GroupsFilters(
       search: search ?? this.search,
       category: clearCategory ? null : (category ?? this.category),
@@ -95,13 +106,17 @@ class GroupsListState {
 /// same dependency-driven refetch as Discovery's nearbyListingsProvider, just
 /// wrapped in a StateNotifier so join/leave can mutate the loaded list.
 class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
-  GroupsListNotifier(this._apiClient, this._filters)
+  GroupsListNotifier(this._apiClient, this._filters, {this.tab})
     : super(const AsyncValue.loading()) {
     refresh();
   }
 
   final ApiClient _apiClient;
   final GroupsFilters _filters;
+
+  /// Which Groups tab this list is for — null for every group (used by
+  /// screens outside the Groups tab, e.g. picking a group for an event).
+  final GroupsTab? tab;
   int _page = 1;
 
   Future<void> refresh() async {
@@ -110,6 +125,7 @@ class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
       final response = await _apiClient.groups(
         search: _filters.search,
         category: _filters.category,
+        membership: tab?.membership,
         page: 1,
       );
       _page = 1;
@@ -131,6 +147,7 @@ class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
       final response = await _apiClient.groups(
         search: _filters.search,
         category: _filters.category,
+        membership: tab?.membership,
         page: _page + 1,
       );
       _page += 1;
@@ -179,7 +196,9 @@ class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
   /// A public group joins instantly. A private group only files a request
   /// — see [JoinGroupResult] — so the card flips to a disabled "Request
   /// Pending" state instead of "Joined".
-  Future<void> joinGroup(int groupId) async {
+  /// Returns true once a member — false when it's a private group and a
+  /// join request was sent instead.
+  Future<bool> joinGroup(int groupId) async {
     final result = await _apiClient.joinGroup(groupId);
     result.when(
       joined: (_) => _updateGroup(groupId, (group) {
@@ -191,6 +210,24 @@ class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
       requested: () => _updateGroup(
         groupId,
         (group) => group.copyWith(joinRequestPending: true),
+      ),
+    );
+    return state.valueOrNull?.groups
+            .where((g) => g.id == groupId)
+            .firstOrNull
+            ?.isMember ??
+        false;
+  }
+
+  /// Takes a group out of this list — e.g. one just joined leaves the
+  /// Discover tab for My groups.
+  void removeGroup(int groupId) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    state = AsyncValue.data(
+      current.copyWith(
+        groups: current.groups.where((g) => g.id != groupId).toList(),
+        total: current.total > 0 ? current.total - 1 : 0,
       ),
     );
   }
@@ -205,6 +242,11 @@ class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
     });
   }
 
+  /// Opening a group's chat marks its messages read on the server (see
+  /// GroupMessageController::index()), so its unread badge goes too.
+  void markChatRead(int groupId) =>
+      _updateGroup(groupId, (group) => group.copyWith(unreadCount: 0));
+
   void _updateGroup(int groupId, Group Function(Group) update) {
     final current = state.valueOrNull;
     if (current == null) return;
@@ -218,6 +260,27 @@ class GroupsListNotifier extends StateNotifier<AsyncValue<GroupsListState>> {
     );
   }
 }
+
+/// The Groups screen's two tabs.
+enum GroupsTab {
+  mine('mine'),
+  discover('others');
+
+  const GroupsTab(this.membership);
+
+  /// The API's `membership` filter value.
+  final String membership;
+}
+
+/// One Groups tab's list: "My groups" or "Discover".
+final groupsTabListProvider = StateNotifierProvider.autoDispose
+    .family<GroupsListNotifier, AsyncValue<GroupsListState>, GroupsTab>(
+      (ref, tab) => GroupsListNotifier(
+        ref.watch(apiClientProvider),
+        ref.watch(groupsFiltersProvider),
+        tab: tab,
+      ),
+    );
 
 final groupsListProvider =
     StateNotifierProvider.autoDispose<
@@ -354,7 +417,7 @@ class GroupPostsState {
 }
 
 /// A single group's discussion-thread posts — the group-scoped counterpart
-/// to HomeFeedNotifier.
+/// to the other paginated lists.
 class GroupPostsNotifier extends StateNotifier<AsyncValue<GroupPostsState>> {
   GroupPostsNotifier(this._apiClient, this._groupId)
     : super(const AsyncValue.loading()) {
@@ -427,14 +490,12 @@ class GroupPostsNotifier extends StateNotifier<AsyncValue<GroupPostsState>> {
   Future<Post> updatePost(
     int postId, {
     String? body,
-    String? category,
     File? image,
     bool removeImage = false,
   }) async {
     final updated = await _apiClient.updatePost(
       postId,
       body: body,
-      category: category,
       image: image,
       removeImage: removeImage,
     );
@@ -572,11 +633,7 @@ class GroupJoinRequestsNotifier
   }
 
   Future<void> reject(int joinRequestId) async {
-    await _apiClient.decideJoinRequest(
-      _groupId,
-      joinRequestId,
-      approve: false,
-    );
+    await _apiClient.decideJoinRequest(_groupId, joinRequestId, approve: false);
     _remove(joinRequestId);
   }
 
@@ -597,7 +654,8 @@ final groupJoinRequestsProvider = StateNotifierProvider.autoDispose
 
 /// A single group's real-time chat thread — the counterpart to
 /// SwapOfferMessagesNotifier, just scoped to a group instead of a swap offer.
-class GroupMessagesNotifier extends StateNotifier<AsyncValue<List<GroupMessage>>> {
+class GroupMessagesNotifier
+    extends StateNotifier<AsyncValue<List<GroupMessage>>> {
   GroupMessagesNotifier(this._apiClient, this._groupId, this._ref)
     : super(const AsyncValue.loading()) {
     refresh();
@@ -621,7 +679,11 @@ class GroupMessagesNotifier extends StateNotifier<AsyncValue<List<GroupMessage>>
   /// swaps it for the server-confirmed message once the request resolves —
   /// or removes it and rethrows on failure, letting the screen's existing
   /// error handling show what went wrong.
-  Future<void> sendMessage({String? body, File? image}) async {
+  Future<void> sendMessage({
+    String? body,
+    List<File> images = const [],
+    MessageReply? replyTo,
+  }) async {
     final me = _ref.read(authControllerProvider).valueOrNull;
     final tempId = _nextTempId--;
     final optimistic = GroupMessage(
@@ -631,7 +693,9 @@ class GroupMessagesNotifier extends StateNotifier<AsyncValue<List<GroupMessage>>
       sender: me,
       createdAt: DateTime.now(),
       isPending: true,
-      localImage: image,
+      localImages: images,
+      replyToId: replyTo?.id,
+      replyTo: replyTo,
     );
     _append(optimistic);
 
@@ -639,7 +703,8 @@ class GroupMessagesNotifier extends StateNotifier<AsyncValue<List<GroupMessage>>
       final message = await _apiClient.sendGroupMessage(
         _groupId,
         body: body,
-        image: image,
+        images: images,
+        replyToId: replyTo?.id,
       );
       _replace(tempId, message);
     } catch (_) {
@@ -648,11 +713,67 @@ class GroupMessagesNotifier extends StateNotifier<AsyncValue<List<GroupMessage>>
     }
   }
 
+  /// Sets or clears the signed-in user's reaction to [emoji] (tapping
+  /// their current one removes it): updates the bubble straight away, then
+  /// settles on the server's answer — or rolls back and rethrows.
+  Future<void> react(int messageId, String emoji) async {
+    final me = _ref.read(authControllerProvider).valueOrNull?.id;
+    final message = state.valueOrNull
+        ?.where((m) => m.id == messageId)
+        .firstOrNull;
+    if (me == null || message == null || message.isPending) return;
+
+    final before = message.reactions;
+    final removing = myReaction(before, me) == emoji;
+    applyReactions(messageId, toggleReaction(before, userId: me, emoji: emoji));
+    try {
+      final reactions = await _apiClient.setGroupMessageReaction(
+        _groupId,
+        messageId,
+        removing ? null : emoji,
+      );
+      applyReactions(messageId, reactions);
+    } catch (_) {
+      applyReactions(messageId, before);
+      rethrow;
+    }
+  }
+
+  /// Replaces one message's reactions — also how a realtime
+  /// `message.reacted` update from someone else lands.
+  void applyReactions(int messageId, List<MessageReaction> reactions) {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    state = AsyncValue.data([
+      for (final m in current)
+        if (m.id == messageId) m.withReactions(reactions) else m,
+    ]);
+  }
+
   /// Adds a message that arrived over the realtime channel — de-duplicated
   /// by id, since the sender's own optimistic [sendMessage] add can race
   /// with its own broadcast echo (toOthers() usually prevents this, but the
   /// dedup is cheap insurance).
-  void receiveMessage(GroupMessage message) => _append(message);
+  /// A realtime push. The server can echo the user's own message back
+  /// before their send request returns — it then takes the place of the
+  /// matching "Sending…" bubble, so the message never shows twice.
+  void receiveMessage(GroupMessage message) {
+    final current = state.valueOrNull ?? [];
+    final me = _ref.read(authControllerProvider).valueOrNull?.id;
+    final pendingIndex = message.sender?.id == me
+        ? current.indexWhere(
+            (m) =>
+                m.isPending &&
+                m.body == message.body &&
+                m.localImages.length == message.imageUrls.length,
+          )
+        : -1;
+    if (pendingIndex < 0 || current.any((m) => m.id == message.id)) {
+      _append(message);
+      return;
+    }
+    state = AsyncValue.data([...current]..[pendingIndex] = message);
+  }
 
   void _append(GroupMessage message) {
     final current = state.valueOrNull ?? [];
@@ -669,10 +790,7 @@ class GroupMessagesNotifier extends StateNotifier<AsyncValue<List<GroupMessage>>
     final alreadyDelivered = current.any((m) => m.id == message.id);
     state = AsyncValue.data([
       for (final m in current)
-        if (m.id != tempId)
-          m
-        else if (!alreadyDelivered)
-          message,
+        if (m.id != tempId) m else if (!alreadyDelivered) message,
     ]);
   }
 
@@ -694,9 +812,8 @@ final groupMessagesProvider = StateNotifierProvider.autoDispose
 /// plain (non-autoDispose) family provider so the chat screen controls its
 /// connect/dispose lifecycle explicitly — mirrors
 /// swapOfferRealtimeChannelProvider.
-final groupRealtimeChannelProvider = Provider.family<GroupRealtimeChannel, int>((
-  ref,
-  groupId,
-) {
-  return GroupRealtimeChannel(dio: ref.watch(dioProvider), groupId: groupId);
-});
+final groupRealtimeChannelProvider = Provider.family<GroupRealtimeChannel, int>(
+  (ref, groupId) {
+    return GroupRealtimeChannel(dio: ref.watch(dioProvider), groupId: groupId);
+  },
+);

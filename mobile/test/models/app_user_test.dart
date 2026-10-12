@@ -51,5 +51,58 @@ void main() {
         expect(user.growingSetup, isNull);
       },
     );
+
+    test('parses follow-graph fields when present (GET /users/{id})', () {
+      final json = {
+        'id': 9,
+        'name': 'Karim',
+        'rating_avg': 4.0,
+        'followers_count': 12,
+        'following_count': 3,
+        'is_following': true,
+        'created_at': '2026-01-01T00:00:00+00:00',
+      };
+
+      final user = AppUser.fromJson(json);
+
+      expect(user.followersCount, 12);
+      expect(user.followingCount, 3);
+      expect(user.isFollowing, isTrue);
+    });
+
+    test('leaves follow-graph fields null when absent', () {
+      final json = {
+        'id': 9,
+        'name': 'Karim',
+        'rating_avg': 4.0,
+        'created_at': '2026-01-01T00:00:00+00:00',
+      };
+
+      final user = AppUser.fromJson(json);
+
+      expect(user.followersCount, isNull);
+      expect(user.followingCount, isNull);
+      expect(user.isFollowing, isNull);
+    });
+  });
+
+  group('AppUser.copyWith', () {
+    test('toggles isFollowing and updates followersCount', () {
+      final user = AppUser(
+        id: 1,
+        name: 'Rina',
+        ratingAvg: 0,
+        followersCount: 4,
+        isFollowing: false,
+        createdAt: DateTime(2026, 1, 1),
+      );
+
+      final followed = user.copyWith(isFollowing: true, followersCount: 5);
+
+      expect(followed.isFollowing, isTrue);
+      expect(followed.followersCount, 5);
+      // Unrelated fields are preserved.
+      expect(followed.name, 'Rina');
+    });
   });
 }

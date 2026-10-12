@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+41
+version: 1.0.0+46
 
 environment:
   sdk: ^3.11.5
@@ -37,7 +37,6 @@ dependencies:
   flutter_riverpod: ^2.6.1
   dio: ^5.11.1
   google_maps_flutter: ^2.18.0
-  geolocator: ^14.0.3
   flutter_secure_storage: ^11.0.0
   cached_network_image: ^3.4.1
   google_fonts: ^6.2.1
@@ -48,12 +47,16 @@ dependencies:
   share_plus: ^13.3.0
   web_socket_channel: ^3.0.1
   url_launcher: ^6.3.2
-  flutter_stripe: ^14.0.0
   firebase_core: ^4.15.0
   firebase_messaging: ^16.7.0
+  google_sign_in: ^7.2.0
+  sign_in_with_apple: ^8.2.0
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -74,6 +77,11 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Plus Jakarta Sans, bundled so google_fonts never downloads it at runtime
+  # (no fallback-font flash on first launch, and it works offline).
+  assets:
+    - assets/google_fonts/
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -28,8 +28,8 @@ class ListingFactory extends Factory
             'title' => fake()->words(3, true),
             'variety' => fake()->word(),
             'listing_type' => fake()->randomElement([
-                'Seeds & Scions',
-                'Live Plants & Saplings',
+                'Seed',
+                'Live plants',
                 'Organic Fertilizers',
                 'Farm Tools & Equipment',
                 'Harvest & Produce',
