@@ -42,7 +42,7 @@ flowchart LR
 | Admin panel | `backend/` → `/admin` | Filament 3. Any user with `is_admin`. Settings page: `app/Filament/Pages/ManageSettings.php`. |
 | Public pages | `backend/routes/web.php` | Share pages (`SharePageController`), privacy and terms. |
 | Database | MariaDB on the server | MySQL 8 locally for tests (spatial columns, so SQLite won't work). |
-| Hosting | CloudPanel server `SERVER_IP`, app root `/home/codecell/htdocs/shobuj-app` | Varnish in front; deploy with `./deploy.sh`. |
+| Hosting | CloudPanel server (address and app root in `.deploy.env`, not in git) | Varnish in front; deploy with `./deploy.sh`. |
 
 ## Admin-managed settings
 

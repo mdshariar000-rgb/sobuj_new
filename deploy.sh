@@ -5,14 +5,19 @@
 #   ./deploy.sh --dry-run  build the tarball and check SSH access, change nothing on the server
 #   ./deploy.sh --yes      don't ask before running pending migrations
 #
-# Needs an SSH key already authorized on the server (one-time: `ssh-copy-id codecell@SERVER_IP`).
+# Server details come from .deploy.env (not in git — copy .deploy.env.example).
+# Needs an SSH key already authorized on the server (one-time: `ssh-copy-id <user>@<host>`).
 # Production keeps its own .env, vendor/ and storage/ contents — none of them are uploaded or touched.
 set -euo pipefail
 
-SERVER_USER="${SERVER_USER:-codecell}"
-SERVER_HOST="${SERVER_HOST:-SERVER_IP}"
-APP_DIR="${APP_DIR:-/home/codecell/htdocs/shobuj-app}"
-SITE_URL="${SITE_URL:-https://codecell.site}"
+cd "$(dirname "$0")"
+# shellcheck source=/dev/null
+[ -f .deploy.env ] && . ./.deploy.env
+: "${SERVER_USER:?Set SERVER_USER in .deploy.env (see .deploy.env.example)}"
+: "${SERVER_HOST:?Set SERVER_HOST in .deploy.env}"
+: "${APP_DIR:?Set APP_DIR in .deploy.env}"
+: "${SITE_URL:?Set SITE_URL in .deploy.env}"
+REMOTE_TMP="${REMOTE_TMP:-/home/$SERVER_USER/tmp}"
 REMOTE="$SERVER_USER@$SERVER_HOST"
 
 DRY_RUN=0
@@ -74,8 +79,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
 fi
 
 echo "==> Uploading and extracting"
-scp "${SSH_OPTS[@]}" -q "$TARBALL" "$REMOTE:/home/codecell/tmp/agrohub-deploy.tar.gz"
-ssh_run "cd $APP_DIR && tar --warning=no-timestamp -xzf /home/codecell/tmp/agrohub-deploy.tar.gz --strip-components=1 && rm -f /home/codecell/tmp/agrohub-deploy.tar.gz && rm -rf storage/framework/testing"
+scp "${SSH_OPTS[@]}" -q "$TARBALL" "$REMOTE:$REMOTE_TMP/agrohub-deploy.tar.gz"
+ssh_run "cd $APP_DIR && tar --warning=no-timestamp -xzf $REMOTE_TMP/agrohub-deploy.tar.gz --strip-components=1 && rm -f $REMOTE_TMP/agrohub-deploy.tar.gz && rm -rf storage/framework/testing"
 
 echo "==> Checking for leftover files"
 # Extracting over the old tree never removes files deleted locally, and

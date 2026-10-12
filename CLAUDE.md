@@ -57,13 +57,13 @@ Local Firebase credentials are optional; push just won't work locally, and tests
 
 ## Deploying (production)
 
-There is no CI. The backend is deployed by tarball; the server is at `SERVER_IP`, user `codecell` (get the password from the owner — **it is not in this repo; prefer setting up an SSH key**). App root on the server: `/home/codecell/htdocs/shobuj-app`. Use `php8.3` and `php8.3 /usr/local/bin/composer`.
+There is no CI. The backend is deployed by tarball. The server's address, SSH user and app root are in `.deploy.env` at the repo root — **not in git**; copy `.deploy.env.example` and get the values from the owner (prefer an SSH key over a password). Use `php8.3` and `php8.3 /usr/local/bin/composer` on the server.
 
-On Windows the earlier deploys used PuTTY's `plink`/`pscp`; on a Mac use plain `ssh`/`scp` (one-time: `ssh-keygen -t ed25519` then `ssh-copy-id codecell@SERVER_IP`, so no password is needed afterwards).
+On Windows the earlier deploys used PuTTY's `plink`/`pscp`; on a Mac use plain `ssh`/`scp` (one-time: `ssh-keygen -t ed25519` then `ssh-copy-id <user>@<host>` with the values from `.deploy.env`, so no password is needed afterwards).
 
 0. Easiest: run `./deploy.sh` from the repo root (does steps 1–6 below with prompts; `--dry-run` checks SSH and builds the tarball only). Manual steps for reference:
 1. Tar `backend/` excluding `vendor`, `.env`, `tests`, `docs`, `node_modules`, and everything under `storage/` and `bootstrap/cache` (production keeps its own `.env` and `vendor`).
-2. Copy it to `/home/codecell/tmp/`, extract over the app root with `--strip-components=1`.
+2. Copy it to the SSH user's `~/tmp/`, extract over the app root with `--strip-components=1`.
 3. `composer install --no-dev --optimize-autoloader --no-interaction`.
 4. `php8.3 artisan migrate:status` — confirm **only the migrations you expect** are pending — then `php8.3 artisan migrate --force`.
 5. `optimize:clear`, then `config:cache`, `route:cache`, `view:cache`, `event:cache`.

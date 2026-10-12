@@ -8,3 +8,9 @@
 
 # Scratch copies made by the deploy-*.sh scripts
 .deploy-*/
+
+# Production server details for deploy.sh (copy .deploy.env.example)
+.deploy.env
+
+# Gradle build output
+mobile/android/build/
